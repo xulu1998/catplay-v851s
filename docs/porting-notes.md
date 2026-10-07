@@ -65,6 +65,13 @@ compressed (EROFS mounted in place), the catplay log is filtered and capped (`u5
 - Open: once, after an automatic reconnect, the touchscreen did not respond for the whole session; the
   next sessions were fine. Patch 0005 is in the image to catch it.
 - If catplay exits, `u5a-catplay-run` saves a crash snapshot and restarts it (tested by killing it).
+- Open, occasional: after reversing the car stayed on its own menu instead of returning to CarPlay (one
+  tap brought CarPlay back). Log of that time: the car borrowed the screen (REAR_CAM), unborrowed it,
+  the phone took it back and video resumed 0.16 s later (catplay tears the car-side screen stream down
+  during a borrow and sets it up again), then 0.25 s after the unborrow the car sent Take
+  (UserInitiated) itself. A repeat attempt returned to CarPlay normally. Compare with a good reverse
+  from the logs before changing anything; one idea to check is whether the car gives up when the
+  video is not back fast enough.
 
 ## Things that cost time
 

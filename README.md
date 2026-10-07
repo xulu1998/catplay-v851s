@@ -47,6 +47,7 @@ Default network: Wi-Fi `CatPlay-V851S`, password `catplay123`. Change it on the 
 | Phone Wi-Fi off and on during CarPlay | reconnects by itself (CatPlay patches 0006–0008) |
 | Phone arriving after the first minute | box keeps paging it (0006); not yet confirmed in the car |
 | Touch after an automatic reconnect | failed once, worked every time since; under investigation |
+| Back to CarPlay after reversing | usually; once stayed on the car menu (open) |
 | Other cars, other V851S boxes | untested |
 
 ## Building
