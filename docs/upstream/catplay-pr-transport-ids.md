@@ -39,10 +39,11 @@ audio, touch). I did not isolate which of the two it actually needs.
 
 **Testing**
 
-- An earlier version with the same message contents (IDs hard-coded to the same values) has been in
-  the car for three drives: CarPlay comes up automatically each time.
-- This exact version: built for armv7 in the catplay-firmware Yocto BSP;
-  `cargo test -p catplay_csm --test ident_test` passes; in-car test: <RESULT>.
+- This exact version has been running in the car since 2026-10-07 over several drives, with two iPhones
+  (iPhone 14 Pro Max and 17 Pro Max, iOS 27): CarPlay comes up by itself each time (screen, audio,
+  touch). An earlier version with the same message contents had been in the car since 2026-10-06.
+- Built for armv7 in the catplay-firmware Yocto BSP; `cargo test -p catplay_csm --test ident_test`
+  passes (with the old code the round-trip test fails and the `has_id` test hangs).
 - Logs of the car session (identification, the invite, the CarPlay setup) are available if useful.
 
 Happy to change the approach if you'd prefer this handled elsewhere. Once it's in, I can send a README
