@@ -26,7 +26,7 @@ compressed (EROFS mounted in place), the catplay log is filtered and capped (`u5
 
 ## CatPlay patches (yocto/meta-u5a/recipes-apps/catplay/files)
 
-- **0002 + 0003 (needed for Hyundai/Kia head units, proposed upstream).** The 2024 Kia Sportage head
+- **0002 + 0003 (needed for Hyundai/Kia head units, submitted as catplay-labs/catplay#34).** The 2024 Kia Sportage head
   unit (Hyundai Mobis "D-Audio", telechips `wp_daudioplus`, iAP2 identity "Sportage" / "NQ5") lists
   DeviceTransportIdentifierNotification (0x4E0E) and DeviceLanguageUpdate (0x4E0A) among the messages
   it accepts, and never invites the device over CarPlay-control until it has received them: the car
@@ -34,7 +34,7 @@ compressed (EROFS mounted in place), the catplay log is filtered and capped (`u5
   head unit lists them. 0002 fixes `IdentificationInformation::unpack_ids` (always returned an empty
   list) and `has_id` (looped forever), which 0003 relies on. Drafts of the upstream report are in
   [upstream/](upstream/).
-- **0006 + 0008 (reconnecting the phone, proposed upstream, catplay#18).** The phone is paged over
+- **0006 + 0008 (reconnecting the phone, submitted as catplay-labs/catplay#35, fixes #18).** The phone is paged over
   Bluetooth only for the first minute after start, and not at all after a session: the iPhone drops its
   Bluetooth link once the wireless session is up, so after its Wi-Fi went off and on, or when it reached
   the car late, CarPlay only came back after connecting Bluetooth by hand. 0006 keeps paging every 10 s

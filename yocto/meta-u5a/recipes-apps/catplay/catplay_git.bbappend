@@ -2,16 +2,16 @@
 RDEPENDS:${PN}:remove:u5a = "catplay-g-iphone"
 
 FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
-# 0002 + 0003 (proposed upstream): head units like the 2024 Kia Sportage (Hyundai Mobis D-Audio) only
+# 0002 + 0003 (submitted upstream, catplay-labs/catplay#34): head units like the 2024 Kia Sportage (Hyundai Mobis D-Audio) only
 #   invite the device after DeviceTransportIdentifierNotification / DeviceLanguageUpdate, which they list
 #   in IdentificationInformation; 0002 fixes the ID list decoding that 0003 relies on.
 # 0004 + u5a-logo.jpg: your own picture on the connection screen (replace the JPEG, 512x512).
 # 0005: info-level log of head-unit touch (HID) events, for diagnosis.
-# 0006 (proposed upstream, catplay#18): keep paging the last iPhone after the first minute, so a phone
+# 0006 (submitted upstream, catplay-labs/catplay#35, fixes #18): keep paging the last iPhone after the first minute, so a phone
 #   that reaches the car late still reconnects without touching it.
 # 0007 (proposed upstream): after the car session ends (e.g. the phone's Wi-Fi goes off), invite the
 #   legacy head unit again instead of leaving it frozen until replug.
-# 0008 (proposed upstream, with 0006): when a session ends, page the phone again so CarPlay comes back by
+# 0008 (submitted upstream with 0006, catplay-labs/catplay#35): when a session ends, page the phone again so CarPlay comes back by
 #   itself when the phone does.
 # 0001 (debug-level logs in release builds) is kept for diagnosis builds and not applied.
 SRC_URI:append:u5a = " file://0002-catplay_csm-fix-IdentificationInformation-unpack_ids-and-has_id.patch \

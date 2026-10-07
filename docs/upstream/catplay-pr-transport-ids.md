@@ -1,4 +1,4 @@
-# Pull request draft: catplay-labs/catplay
+# Pull request: https://github.com/catplay-labs/catplay/pull/34 (submitted 2026-10-07)
 
 Branch: `fix-iap2-transport-identifiers` (two commits on dbb3ebb). Same changes as
 yocto/meta-u5a/recipes-apps/catplay/files/0002 and 0003.

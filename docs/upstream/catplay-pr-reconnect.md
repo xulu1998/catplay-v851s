@@ -1,4 +1,4 @@
-# Pull request draft: catplay-labs/catplay (reconnecting the phone, #18)
+# Pull request: https://github.com/catplay-labs/catplay/pull/35 (submitted 2026-10-07, fixes #18)
 
 Branch: `keep-paging-last-iphone` (two commits on dbb3ebb). Same changes as
 yocto/meta-u5a/recipes-apps/catplay/files/0006 and 0008.
