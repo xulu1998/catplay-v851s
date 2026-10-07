@@ -13,6 +13,8 @@ FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
 #   legacy head unit again instead of leaving it frozen until replug.
 # 0008 (submitted upstream with 0006, catplay-labs/catplay#35): when a session ends, page the phone again so CarPlay comes back by
 #   itself when the phone does.
+# 0009 (interim): CSeq sanity check off; recent iOS versions trip it and the session drops. Upstream drops
+#   the check in its next release (maintainer, catplay-labs/catplay#35); remove 0009 when updating catplay.
 # 0001 (debug-level logs in release builds) is kept for diagnosis builds and not applied.
 SRC_URI:append:u5a = " file://0002-catplay_csm-fix-IdentificationInformation-unpack_ids-and-has_id.patch \
                        file://0003-catplay_carplay_tx_gadget-send-transport-IDs-and-language.patch \
@@ -20,7 +22,8 @@ SRC_URI:append:u5a = " file://0002-catplay_csm-fix-IdentificationInformation-unp
                        file://0005-u5a-log-hid-events.patch \
                        file://0006-catplay_carplay_rx_gadget-keep-paging-the-last-iPhone.patch \
                        file://0007-catplay_carplay_tx_gadget-re-arm-the-legacy-self-invite.patch \
-                       file://0008-catplay_carplay_rx_gadget-page-the-iPhone-again-when-a-session-ends.patch"
+                       file://0008-catplay_carplay_rx_gadget-page-the-iPhone-again-when-a-session-ends.patch \
+                       file://0009-catplay_carplay-do-not-enforce-CSeq-sanity.patch"
 
 do_compile:prepend:u5a() {
     install -m 0644 ${UNPACKDIR}/u5a-logo.jpg ${S}/c2a/catplay_c2a/assets/logo.jpg

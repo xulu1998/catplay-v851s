@@ -1,0 +1,32 @@
+From db01a5f3418fd5d710244ea7eb9f0b512b6558d5 Mon Sep 17 00:00:00 2001
+From: xulu1998 <58898570+xulu1998@users.noreply.github.com>
+Date: Wed, 7 Oct 2026 10:31:41 -0400
+Subject: [PATCH] catplay_carplay: do not enforce CSeq sanity on the receiver
+
+Recent iOS versions violate it during healthy sessions, which then drop; the
+maintainer plans to drop the check in the next release (catplay#35 discussion).
+
+Upstream-Status: Inappropriate [interim; upstream drops the check in its next release]
+
+---
+ carplay/catplay_carplay/src/rtsp_session/rtsp_receiver.rs | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/carplay/catplay_carplay/src/rtsp_session/rtsp_receiver.rs b/carplay/catplay_carplay/src/rtsp_session/rtsp_receiver.rs
+index 2574a3d..1f1c8e9 100644
+--- a/carplay/catplay_carplay/src/rtsp_session/rtsp_receiver.rs
++++ b/carplay/catplay_carplay/src/rtsp_session/rtsp_receiver.rs
+@@ -102,7 +102,9 @@ pub trait RtspReceiverCallback:
+ impl<T: RtspReceiverCallback> RtspReceiver<T> {
+     const RESPONSE_PAYLOAD_CACHE_MAX: usize = 4096;
+     // Some CarPlay dongles violate CSeq sanity so changing this allows communication with them.
+-    const ENFORCE_CSEQ_SANITY: bool = true;
++    // U5A: off, as upstream plans for the next release: recent iOS versions send CSeq values that fail this
++    // check during healthy sessions, which then drop.
++    const ENFORCE_CSEQ_SANITY: bool = false;
+ 
+     pub fn new(callback: T) -> Self {
+         Self {
+-- 
+2.54.0 (Apple Git-157)
+
