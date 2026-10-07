@@ -27,13 +27,14 @@ Center; the session ended on KeepAliveTimeout and the car went back to the conne
 reconnects the phone: it rejoins the adapter's Wi-Fi but CarPlay only comes back after reconnecting
 Bluetooth by hand. Commit 2 starts the last-connect task again when a received session ends.
 
-**Testing (in the car):** with both commits, a phone that arrives more than a minute after the car was
-started connects by itself, and after Wi-Fi off/on CarPlay comes back by itself, without touching the
-phone. Built for armv7 in the catplay-firmware Yocto BSP.
+**Testing.** In the car, with both commits: after Wi-Fi off/on the phone reconnects and CarPlay comes
+back by itself, without touching the phone. For the late-arrival case I have verified on the adapter
+that paging continues after the first minute (log: "… retrying every 10s"), but I have not yet repeated
+the walk-to-the-car scenario in the car. Built for armv7 in the catplay-firmware Yocto BSP.
 
-Notes: the paging after the first minute is one attempt (one page timeout) every 10 s, so the adapter
-stays discoverable for new phones in between. I don't know whether other cars or adapters prefer a
-different interval; happy to adjust.
+Notes: after the first minute it is one attempt (one page timeout) every 10 s, to leave the radio free
+most of the time. I don't know whether other cars or adapters prefer a different interval; happy to
+adjust.
 
 ---
 
