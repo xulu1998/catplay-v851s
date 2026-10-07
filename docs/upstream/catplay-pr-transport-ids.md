@@ -40,8 +40,9 @@ audio, touch). I did not isolate which of the two it actually needs.
 **Testing**
 
 - This exact version has been running in the car since 2026-10-07 over several drives, with two iPhones
-  (iPhone 14 Pro Max and 17 Pro Max, iOS 27): CarPlay comes up by itself each time (screen, audio,
-  touch). An earlier version with the same message contents had been in the car since 2026-10-06.
+  (iPhone 14 Pro Max and 17 Pro Max, iOS 27): every time the adapter is plugged in, the head unit
+  invites it and CarPlay starts as soon as a phone is connected (screen, audio, touch). An earlier
+  version with the same message contents had been in the car since 2026-10-06.
 - Built for armv7 in the catplay-firmware Yocto BSP; `cargo test -p catplay_csm --test ident_test`
   passes (with the old code the round-trip test fails and the `has_id` test hangs).
 - Logs of the car session (identification, the invite, the CarPlay setup) are available if useful.
