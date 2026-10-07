@@ -38,8 +38,9 @@ compressed (EROFS mounted in place), the catplay log is filtered and capped (`u5
   Bluetooth only for the first minute after start, and not at all after a session: the iPhone drops its
   Bluetooth link once the wireless session is up, so after its Wi-Fi went off and on, or when it reached
   the car late, CarPlay only came back after connecting Bluetooth by hand. 0006 keeps paging every 10 s
-  after the first minute; 0008 starts paging again when a session ends. Tested in the car: a phone that
-  arrives late, and the phone's Wi-Fi off and on, both reconnect by themselves.
+  after the first minute; 0008 starts paging again when a session ends. Tested in the car: after the
+  phone's Wi-Fi goes off and on, it reconnects by itself. The late-arrival case is verified on the box
+  (paging continues) but not yet in the car.
 - **0007 (proposed upstream).** Head units without the CARPLAY_CONTROL flag (the Kia) never invite on their
   own; CatPlay invites itself once per USB session. Once, turning the phone's Wi-Fi off made CatPlay end
   the car session ("iPhone disconnected while command proxies were inflight"); the car was never invited

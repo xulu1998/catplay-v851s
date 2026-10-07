@@ -44,7 +44,8 @@ Default network: Wi-Fi `CatPlay-V851S`, password `catplay123`. Change it on the 
 | Settings page, firmware update over Wi-Fi | works |
 | First pairing | needs one tap on the car screen (Bluetooth pairing confirmation) |
 | Bluetooth after a warm reset | does not come back until a power cycle (avoided by design) |
-| Phone arriving late, phone Wi-Fi off and on | reconnects by itself (CatPlay patches 0006–0008) |
+| Phone Wi-Fi off and on during CarPlay | reconnects by itself (CatPlay patches 0006–0008) |
+| Phone arriving after the first minute | box keeps paging it (0006); not yet confirmed in the car |
 | Touch after an automatic reconnect | failed once, worked every time since; under investigation |
 | Other cars, other V851S boxes | untested |
 
