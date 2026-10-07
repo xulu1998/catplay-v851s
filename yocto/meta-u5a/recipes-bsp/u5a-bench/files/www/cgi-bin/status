@@ -1,0 +1,22 @@
+#!/bin/sh
+# JSON status for the settings page.
+js() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
+MODE=bench; for a in $(cat /proc/cmdline); do case "$a" in u5a.mode=*) MODE=${a#u5a.mode=} ;; esac; done
+echo "Content-Type: application/json"
+echo
+printf '{'
+printf '"uptime":"%s",' "$(cut -d. -f1 /proc/uptime)"
+printf '"mode":"%s",' "$MODE"
+printf '"catplay":%s,' "$(pidof catplay_c2a >/dev/null && echo true || echo false)"
+printf '"version":"%s",' "$(js "$(cat /etc/u5a/version 2>/dev/null)")"
+printf '"persist":"%s",' "$(df -k /persist | awk 'NR==2{print $3"/"$2" kB"}')"
+printf '"last_phone":"%s",' "$(js "$(cat /persist/catplay_last_connect.txt 2>/dev/null)")"
+for k in WIFI_SSID WIFI_PASS BT_NAME WIFI_CHANNEL PREFERRED_PHONE; do printf '"%s":"%s",' "$k" "$(js "$(u5a-settings get $k)")"; done
+printf '"phones":['
+sep=""
+for d in /var/lib/bluetooth/*/??:??:??:??:??:??; do
+    [ -f "$d/info" ] || continue
+    printf '%s{"mac":"%s","name":"%s"}' "$sep" "$(basename "$d")" "$(js "$(grep -m1 '^Name=' "$d/info" | cut -d= -f2-)")"
+    sep=","
+done
+printf ']}\n'

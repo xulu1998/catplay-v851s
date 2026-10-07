@@ -1,0 +1,36 @@
+Date: Wed, 2 Sep 2026 14:45:00 +0200
+Subject: [PATCH 2/6] phy: sun4i-usb: guard PHY_CTL_VBUSVLDEXT
+
+Not all chips have PHY_CTL_VBUSVLDEXT. Pretending they always do may lead
+to undefined behavior.
+
+Add a configuration quirk and avoid setting the bit when it is enabled.
+
+Upstream-Status: Pending
+---
+ drivers/phy/allwinner/phy-sun4i-usb.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/phy/allwinner/phy-sun4i-usb.c b/drivers/phy/allwinner/phy-sun4i-usb.c
+--- a/drivers/phy/allwinner/phy-sun4i-usb.c
++++ b/drivers/phy/allwinner/phy-sun4i-usb.c
+@@ -188,6 +188,7 @@ struct sun4i_usb_phy_cfg {
+ 	bool phy0_dual_route;
+ 	bool needs_phy2_siddq;
+ 	bool siddq_in_base;
++	bool no_vbus_valid_ext;
+ 	bool poll_vbusen;
+ 	int missing_phys;
+ };
+@@ -449,7 +450,8 @@ static int sun4i_usb_phy_init(struct phy *_phy)
+ 	if (data->cfg->siddq_in_base) {
+ 		if (phy->index == 0) {
+ 			val = readl(data->base + data->cfg->phyctl_offset);
+-			val |= PHY_CTL_VBUSVLDEXT;
++			if (!data->cfg->no_vbus_valid_ext)
++				val |= PHY_CTL_VBUSVLDEXT;
+ 			val &= ~PHY_CTL_SIDDQ;
+ 			writel(val, data->base + data->cfg->phyctl_offset);
+ 		}
+-- 
+2.55.0

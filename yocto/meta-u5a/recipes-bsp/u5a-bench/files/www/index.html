@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CarPlay 盒子设置</title>
+<style>
+  :root { --bg:#f2f2f7; --card:#fff; --text:#1c1c1e; --muted:#6e6e73; --accent:#0a84ff; --line:#d1d1d6; --bad:#d70015; --good:#248a3d; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#000; --card:#1c1c1e; --text:#f2f2f7; --muted:#98989d; --line:#38383a; --bad:#ff453a; --good:#30d158; } }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:16px; background:var(--bg); color:var(--text); font:16px/1.4 -apple-system, system-ui, sans-serif; }
+  h1 { font-size:22px; margin:4px 4px 16px; }
+  h2 { font-size:13px; font-weight:600; color:var(--muted); text-transform:uppercase; margin:20px 12px 6px; }
+  .card { background:var(--card); border-radius:12px; padding:4px 16px; }
+  .row { display:flex; justify-content:space-between; gap:12px; padding:11px 0; border-bottom:1px solid var(--line); }
+  .row:last-child { border-bottom:none; }
+  .row span:first-child { color:var(--muted); }
+  label { display:block; padding:10px 0 4px; color:var(--muted); font-size:14px; }
+  input, select { width:100%; font:inherit; padding:10px 12px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--text); margin-bottom:8px; }
+  .buttons { display:flex; gap:10px; margin:16px 0 4px; }
+  button { flex:1; font:inherit; font-weight:600; padding:12px; border:none; border-radius:10px; background:var(--accent); color:#fff; }
+  button.secondary { background:var(--line); color:var(--text); }
+  #msg { min-height:22px; margin:8px 4px; font-size:14px; }
+  .bad { color:var(--bad); } .good { color:var(--good); }
+  .note { color:var(--muted); font-size:13px; margin:6px 4px; }
+</style>
+</head>
+<body>
+<h1>CarPlay 盒子设置</h1>
+
+<h2>状态</h2>
+<div class="card" id="status"><div class="row"><span>正在读取…</span><span></span></div></div>
+
+<h2>设置</h2>
+<div class="card">
+  <label for="ssid">Wi-Fi 名称</label><input id="ssid" maxlength="32" autocomplete="off">
+  <label for="pass">Wi-Fi 密码（8–63 位）</label><input id="pass" maxlength="63" autocomplete="off">
+  <label for="bt">蓝牙名称</label><input id="bt" maxlength="48" autocomplete="off">
+  <label for="channel">Wi-Fi 信道（5 GHz）</label>
+  <select id="channel">
+    <option>36</option><option>40</option><option>44</option><option>48</option>
+    <option>149</option><option>153</option><option>157</option><option>161</option>
+  </select>
+  <label for="preferred">优先连接的 iPhone</label>
+  <select id="preferred"><option value="">不设置（谁先到连谁）</option></select>
+  <div class="buttons">
+    <button id="save">保存</button>
+    <button id="apply" class="secondary">保存并立即生效</button>
+  </div>
+  <div id="msg"></div>
+</div>
+<p class="note">“立即生效”会重启盒子的 Wi-Fi 和 CarPlay 服务，正在使用的 CarPlay 会断开几秒后自动重连。只点“保存”则在下次上车启动时生效。</p>
+
+<h2>固件升级</h2>
+<div class="card">
+  <label for="fw">选择固件文件（u5a-ota-*.bin）</label><input id="fw" type="file" accept=".bin">
+  <div class="buttons"><button id="upgrade">上传并升级</button></div>
+  <div id="fwmsg"></div>
+</div>
+<p class="note">请在停车、供电稳定时升级，整个过程约 2 分钟，期间不要拔掉盒子。升级只改写系统部分，配对记录和设置会保留。万一中途断电，盒子不会损坏，但需要连电脑恢复。</p>
+
+<script>
+const $ = id => document.getElementById(id);
+const fmtUptime = s => { s = +s; const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60); return (h ? h + " 小时 " : "") + m + " 分钟"; };
+function row(k, v) { const d = document.createElement("div"); d.className = "row"; const a = document.createElement("span"), b = document.createElement("span"); a.textContent = k; b.textContent = v; d.append(a, b); return d; }
+function phoneName(st, mac) { const p = st.phones.find(x => x.mac === mac); return p ? (p.name || mac) : (mac || "—"); }
+async function load() {
+  const st = await (await fetch("/cgi-bin/status", { cache: "no-store" })).json();
+  const s = $("status"); s.replaceChildren(
+    row("运行时间", fmtUptime(st.uptime)),
+    row("CarPlay 服务", st.catplay ? "运行中" : "未运行"),
+    row("上次连接的手机", phoneName(st, st.last_phone)),
+    row("已配对手机", st.phones.length ? st.phones.map(p => p.name || p.mac).join("、") : "无"),
+    row("存储", st.persist),
+    row("固件版本", st.version || "—"));
+  $("ssid").value = st.WIFI_SSID; $("pass").value = st.WIFI_PASS; $("bt").value = st.BT_NAME;
+  $("channel").value = st.WIFI_CHANNEL;
+  const sel = $("preferred"); sel.length = 1;
+  for (const p of st.phones) { const o = document.createElement("option"); o.value = p.mac; o.textContent = (p.name || "iPhone") + "（" + p.mac + "）"; sel.append(o); }
+  sel.value = st.PREFERRED_PHONE || "";
+}
+function say(text, ok) { const m = $("msg"); m.textContent = text; m.className = ok ? "good" : "bad"; }
+async function save() {
+  const body = new URLSearchParams({ ssid: $("ssid").value, pass: $("pass").value, bt: $("bt").value, channel: $("channel").value, preferred: $("preferred").value });
+  const r = await (await fetch("/cgi-bin/save", { method: "POST", body })).json();
+  if (!r.ok) { say("没有保存：" + r.error, false); return false; }
+  return true;
+}
+$("save").onclick = async () => { if (await save()) say("已保存，下次启动时生效。", true); };
+$("apply").onclick = async () => {
+  if (!(await save())) return;
+  await fetch("/cgi-bin/apply", { method: "POST" });
+  say("已保存，正在重启 Wi-Fi 和 CarPlay…如果改了 Wi-Fi 名称或密码，手机会在 CarPlay 重连时自动换到新网络。", true);
+};
+function fwsay(text, ok) { const m = $("fwmsg"); m.textContent = text; m.className = ok ? "good" : "bad"; }
+$("upgrade").onclick = () => {
+  const f = $("fw").files[0];
+  if (!f) { fwsay("请先选择固件文件。", false); return; }
+  if (!confirm("确定升级吗？请确认车辆已停好、盒子供电稳定。升级约 2 分钟，CarPlay 会暂时断开。")) return;
+  const x = new XMLHttpRequest();
+  x.open("POST", "/cgi-bin/update");
+  x.setRequestHeader("Content-Type", "application/octet-stream");
+  x.upload.onprogress = e => { if (e.lengthComputable) fwsay("正在上传… " + Math.round(e.loaded * 100 / e.total) + "%", true); };
+  x.upload.onload = () => fwsay("上传完成，正在校验并写入，请勿拔掉盒子…", true);
+  x.onload = () => {
+    let r; try { r = JSON.parse(x.responseText); } catch (e) { fwsay("升级结果未知：" + x.responseText, false); return; }
+    if (r.ok) fwsay("升级成功！请把盒子拔下来再插上（或熄火后重新启动车辆），新固件就会生效。", true);
+    else fwsay("升级没有完成：" + r.error, false);
+  };
+  x.onerror = () => fwsay("连接中断。如果盒子之后无法启动，请连电脑恢复。", false);
+  x.send(f);
+};
+load().catch(e => say("读取状态失败：" + e, false));
+</script>
+</body>
+</html>

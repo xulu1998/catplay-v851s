@@ -1,0 +1,69 @@
+From 76de4796067babbe7f9c68853d4ddc8811af71d6 Mon Sep 17 00:00:00 2001
+From: xulu1998 <58898570+xulu1998@users.noreply.github.com>
+Date: Wed, 7 Oct 2026 07:52:50 -0400
+Subject: [PATCH] catplay_carplay_rx_gadget: keep paging the last iPhone after
+ the first minute
+
+The last-connect task gave up after 60 s, so a phone that reaches the car
+later (left the house after the car was started, or Bluetooth turned on
+late) was never reconnected and had to be connected by hand from the
+phone's Bluetooth settings (#18).
+
+Keep the fast retries for the first minute, then keep paging every 10 s
+until the reconnect succeeds. The task is already dropped when a session is
+received, which stops the paging.
+
+Upstream-Status: Pending
+
+---
+ .../src/server_wireless.rs                    | 20 ++++++++++++++-----
+ 1 file changed, 15 insertions(+), 5 deletions(-)
+
+diff --git a/catplay_carplay_rx_gadget/src/server_wireless.rs b/catplay_carplay_rx_gadget/src/server_wireless.rs
+index fce10a4..fb327b9 100644
+--- a/catplay_carplay_rx_gadget/src/server_wireless.rs
++++ b/catplay_carplay_rx_gadget/src/server_wireless.rs
+@@ -469,9 +469,14 @@ impl<T: AirPlayReceiverSink> Reconcilable for CarPlayWirelessGadget<T> {
+                     let task = spawn(async move {
+                         const INVITE_DEADLINE: Duration = Duration::from_millis(60000);
+                         const INVITE_RETRY: Duration = Duration::from_millis(100);
++                        // After the first minute, keep paging at a lower duty cycle so a phone that
++                        // arrives late (or turns Bluetooth on late) still gets reconnected. The task is
++                        // dropped, and the paging stops, once a session is received.
++                        const INVITE_RETRY_SLOW: Duration = Duration::from_millis(10000);
+ 
+                         let invite_deadline = Instant::now() + INVITE_DEADLINE;
+                         let mut last_err = None;
++                        let mut slow = false;
+ 
+                         loop {
+                             match BluetoothManager::invite_iphone(&hci, &peer_mac).await {
+@@ -486,15 +491,20 @@ impl<T: AirPlayReceiverSink> Reconcilable for CarPlayWirelessGadget<T> {
+ 
+                             let remaining = invite_deadline.saturating_duration_since(Instant::now());
+                             if remaining.is_zero() {
+-                                break;
++                                if !slow {
++                                    slow = true;
++                                    if let Some(err) = last_err.as_ref() {
++                                        warn!(
++                                            "Failed to reconnect to iPhone peer {peer_mac} before invite deadline: {err:?}; retrying every {INVITE_RETRY_SLOW:?}"
++                                        );
++                                    }
++                                }
++                                sleep(INVITE_RETRY_SLOW).await;
++                                continue;
+                             }
+ 
+                             sleep(remaining.min(INVITE_RETRY)).await;
+                         }
+-
+-                        if let Some(err) = last_err {
+-                            warn!("Failed to reconnect to iPhone peer {peer_mac} before invite deadline: {err:?}");
+-                        }
+                     });
+                     self.last_bt_peer_task.replace(task);
+                 }
+-- 
+2.54.0 (Apple Git-157)
+

@@ -1,0 +1,24 @@
+#!/bin/sh
+# POST application/x-www-form-urlencoded: ssid, pass, bt, channel, preferred. Validated, then written
+# atomically to /persist/settings.conf. Nothing here is ever evaluated as code.
+echo "Content-Type: application/json"
+echo
+fail() { printf '{"ok":false,"error":"%s"}\n' "$1"; exit 0; }
+[ "$REQUEST_METHOD" = POST ] || fail "POST only"
+[ "${CONTENT_LENGTH:-0}" -gt 0 ] && [ "$CONTENT_LENGTH" -lt 4096 ] || fail "bad length"
+body=$(head -c "$CONTENT_LENGTH")
+field() { printf '%s' "$body" | tr '&' '\n' | grep -m1 "^$1=" | cut -d= -f2-; }
+dec() { httpd -d "$1"; }
+ssid=$(dec "$(field ssid)"); pass=$(dec "$(field pass)"); bt=$(dec "$(field bt)")
+ch=$(dec "$(field channel)"); pref=$(dec "$(field preferred)")
+bad() { printf '%s' "$1" | grep -q '["\\]' || [ "$(printf '%s' "$1" | wc -l)" -gt 0 ]; }
+n=$(printf '%s' "$ssid" | wc -c); [ "$n" -ge 1 ] && [ "$n" -le 32 ] && ! bad "$ssid" || fail "Wi-Fi name: 1-32 bytes, no quotes or backslashes"
+n=$(printf '%s' "$pass" | wc -c); [ "$n" -ge 8 ] && [ "$n" -le 63 ] && ! bad "$pass" || fail "Wi-Fi password: 8-63 characters, no quotes or backslashes"
+n=$(printf '%s' "$bt" | wc -c); [ "$n" -ge 1 ] && [ "$n" -le 48 ] && ! bad "$bt" || fail "Bluetooth name: 1-48 bytes, no quotes or backslashes"
+case "$ch" in 36|40|44|48|149|153|157|161) ;; *) fail "channel not allowed" ;; esac
+[ -z "$pref" ] || printf '%s' "$pref" | grep -qE '^([0-9A-F]{2}:){5}[0-9A-F]{2}$' || fail "bad phone address"
+{
+    echo "WIFI_SSID=$ssid"; echo "WIFI_PASS=$pass"; echo "BT_NAME=$bt"
+    echo "WIFI_CHANNEL=$ch"; echo "PREFERRED_PHONE=$pref"
+} > /persist/settings.conf.tmp && mv /persist/settings.conf.tmp /persist/settings.conf && sync
+echo '{"ok":true}'

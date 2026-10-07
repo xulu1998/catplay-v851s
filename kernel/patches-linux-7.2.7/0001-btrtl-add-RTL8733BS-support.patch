@@ -1,0 +1,173 @@
+Date: Sat, 8 Aug 2026 21:35:00 +0200
+Subject: [PATCH] Bluetooth: btrtl: add RTL8733BS support
+
+RTL8733BS uses the RTL8723FS Bluetooth firmware but does not support
+the vendor reg16 reads used during generic Realtek initialization.
+
+Add an H5 device quirk for RTL8733BS and propagate it through the
+existing Realtek-private flag bitmap. Skip the unsupported reg16 reads
+when that quirk is set, while retaining normal HCI version based
+identification.
+
+Add the RTL8723FS firmware match, project ID and firmware declarations,
+and bind the quirk to the realtek,rtl8733bs-bt compatible.
+
+Upstream-Status: Pending
+---
+diff --git a/drivers/bluetooth/btrtl.c b/drivers/bluetooth/btrtl.c
+index cb256cf..fdd7756 100644
+--- a/drivers/bluetooth/btrtl.c
++++ b/drivers/bluetooth/btrtl.c
+@@ -170,6 +170,14 @@
+ 	  .cfg_name = "rtl_bt/rtl8723ds_config",
+ 	  .hw_info  = "rtl8723ds" },
+ 
++	/* 8723FS */
++	{ IC_INFO(RTL_ROM_LMP_8723B, 0xf, 0x8, HCI_UART),
++	  .config_needed = true,
++	  .has_rom_version = true,
++	  .fw_name  = "rtl_bt/rtl8723fs_fw",
++	  .cfg_name = "rtl_bt/rtl8723fs_config",
++	  .hw_info  = "rtl8723fs" },
++
+ 	/* 8821A */
+ 	{ IC_INFO(RTL_ROM_LMP_8821A, 0xa, 0x6, HCI_USB),
+ 
+@@ -658,6 +666,7 @@
+ 		{ RTL_ROM_LMP_8822B, 13 },	/* 8822C */
+ 		{ RTL_ROM_LMP_8761A, 14 },	/* 8761B */
+ 		{ RTL_ROM_LMP_8852A, 18 },	/* 8852A */
++		{ RTL_ROM_LMP_8723B, 19 },	/* 8723FS */
+ 		{ RTL_ROM_LMP_8852A, 20 },	/* 8852B */
+ 		{ RTL_ROM_LMP_8852A, 25 },	/* 8852C */
+ 
+@@ -1075,6 +1084,7 @@ struct btrtl_device_info *btrtl_initialize(struct hci_dev *hdev,
+ 	int rc;
+ 	u8 key_id;
+ 	u8 reg_val[2];
++	bool skip_reg16 = btrealtek_test_flag(hdev, REALTEK_SKIP_REG16);
+ 
+ 	btrtl_dev = kzalloc_obj(*btrtl_dev);
+ 	if (!btrtl_dev) {
+@@ -1085,12 +1095,14 @@ struct btrtl_device_info *btrtl_initialize(struct hci_dev *hdev,
+ 	INIT_LIST_HEAD(&btrtl_dev->patch_subsecs);
+ 
+ check_version:
+-	ret = btrtl_vendor_read_reg16(hdev, RTL_CHIP_SUBVER, reg_val);
+-	if (ret < 0)
+-		goto err_free;
+-	lmp_subver = get_unaligned_le16(reg_val);
++	if (!skip_reg16) {
++		ret = btrtl_vendor_read_reg16(hdev, RTL_CHIP_SUBVER, reg_val);
++		if (ret < 0)
++			goto err_free;
++		lmp_subver = get_unaligned_le16(reg_val);
++	}
+ 
+-	if (lmp_subver == RTL_ROM_LMP_8822B) {
++	if (!skip_reg16 && lmp_subver == RTL_ROM_LMP_8822B) {
+ 		ret = btrtl_vendor_read_reg16(hdev, RTL_CHIP_REV, reg_val);
+ 
+ 
+@@ -1190,11 +1202,16 @@ check_version:
+ 		goto err_free;
+ 	}
+ 
+-	rc = btrtl_vendor_read_reg16(hdev, RTL_SEC_PROJ, reg_val);
+-	if (rc < 0)
+-		goto err_free;
++	if (skip_reg16) {
++		key_id = 0;
++	} else {
++		rc = btrtl_vendor_read_reg16(hdev, RTL_SEC_PROJ, reg_val);
++		if (rc < 0)
++			goto err_free;
++
++		key_id = reg_val[0];
++	}
+ 
+-	key_id = reg_val[0];
+ 	btrtl_dev->key_id = key_id;
+ 	rtl_dev_info(hdev, "%s: key id %u", __func__, key_id);
+ 
+@@ -1531,6 +1548,8 @@ MODULE_FIRMWARE("rtl_bt/rtl8723b_fw.bin");
+ MODULE_FIRMWARE("rtl_bt/rtl8723b_config.bin");
+ MODULE_FIRMWARE("rtl_bt/rtl8723bs_fw.bin");
+ MODULE_FIRMWARE("rtl_bt/rtl8723bs_config.bin");
++MODULE_FIRMWARE("rtl_bt/rtl8723fs_fw.bin");
++MODULE_FIRMWARE("rtl_bt/rtl8723fs_config.bin");
+ MODULE_FIRMWARE("rtl_bt/rtl8723cs_cg_fw.bin");
+ MODULE_FIRMWARE("rtl_bt/rtl8723cs_cg_config.bin");
+ 
+diff --git a/drivers/bluetooth/btrtl.h b/drivers/bluetooth/btrtl.h
+index 00bca72..d12e884 100644
+--- a/drivers/bluetooth/btrtl.h
++++ b/drivers/bluetooth/btrtl.h
+@@ -98,6 +98,7 @@
+ 
+ enum {
+ 	REALTEK_ALT6_CONTINUOUS_TX_CHIP,
++	REALTEK_SKIP_REG16,
+ 
+ 	__REALTEK_NUM_FLAGS,
+ };
+diff --git a/drivers/bluetooth/hci_h5.c b/drivers/bluetooth/hci_h5.c
+index 0609510..0b9c5d6 100644
+--- a/drivers/bluetooth/hci_h5.c
++++ b/drivers/bluetooth/hci_h5.c
+@@ -52,6 +52,7 @@ enum {
+ 	H5_RX_ESC,		/* SLIP escape mode */
+ 	H5_TX_ACK_REQ,		/* Pending ack to send */
+ 	H5_WAKEUP_DISABLE,	/* Device cannot wake host */
++	H5_RTL_SKIP_REG16,	/* Skip unsupported Realtek reg16 reads */
+ 	H5_HW_FLOW_CONTROL,	/* Use HW flow control */
+ 	H5_CRC,			/* Use CRC */
+ };
+@@ -103,6 +104,7 @@ enum {
+ 
+ enum h5_driver_info {
+ 	H5_INFO_WAKEUP_DISABLE = BIT(0),
++	H5_INFO_RTL_SKIP_REG16 = BIT(1),
+ };
+ 
+ struct h5_vnd {
+@@ -885,6 +887,8 @@ struct h5_vnd {
+ 
+ 	if (data->driver_info & H5_INFO_WAKEUP_DISABLE)
+ 		set_bit(H5_WAKEUP_DISABLE, &h5->flags);
++	if (data->driver_info & H5_INFO_RTL_SKIP_REG16)
++		set_bit(H5_RTL_SKIP_REG16, &h5->flags);
+ 
+ 	h5->enable_gpio = devm_gpiod_get_optional(dev, "enable", GPIOD_OUT_LOW);
+ 
+@@ -939,6 +943,9 @@ struct h5_vnd {
+ 	bool flow_control;
+ 	int err;
+ 
++	if (test_bit(H5_RTL_SKIP_REG16, &h5->flags))
++		btrealtek_set_flag(h5->hu->hdev, REALTEK_SKIP_REG16);
++
+ 	btrtl_dev = btrtl_initialize(h5->hu->hdev, h5->id);
+ 	if (IS_ERR(btrtl_dev))
+ 		return PTR_ERR(btrtl_dev);
+@@ -1109,6 +1116,11 @@ static const struct h5_device_data h5_data_rtl8723bs = {
+ 	.driver_info = H5_INFO_WAKEUP_DISABLE,
+ 	.vnd = &rtl_vnd,
+ };
++
++static const struct h5_device_data h5_data_rtl8733bs = {
++	.driver_info = H5_INFO_RTL_SKIP_REG16,
++	.vnd = &rtl_vnd,
++};
+ #endif
+ 
+ 
+@@ -1139,6 +1151,8 @@ static const struct of_device_id rtl_bluetooth_of_match[] = {
+ #ifdef CONFIG_BT_HCIUART_RTL
+ 	{ .compatible = "realtek,rtl8822cs-bt",
+ 	  .data = (const void *)&h5_data_rtl8822cs },
++	{ .compatible = "realtek,rtl8733bs-bt",
++	  .data = (const void *)&h5_data_rtl8733bs },
+ 	{ .compatible = "realtek,rtl8723bs-bt",
+ 	  .data = (const void *)&h5_data_rtl8723bs },
+ 	{ .compatible = "realtek,rtl8723cs-bt",

@@ -1,0 +1,18 @@
+U5A: own connection-screen logo (assets/logo.jpg is replaced at build time by the recipe). Bump the
+keyframe cache version, because the cached welcome frame in /persist is keyed by UI state, not by the image.
+
+Upstream-Status: Inappropriate [U5A customisation]
+
+diff --git a/c2a/catplay_c2a/src/ui/ui_state.rs b/c2a/catplay_c2a/src/ui/ui_state.rs
+index 1991ee6..4761715 100644
+--- a/c2a/catplay_c2a/src/ui/ui_state.rs
++++ b/c2a/catplay_c2a/src/ui/ui_state.rs
+@@ -3,7 +3,7 @@ use std::fmt::{Display, Formatter};
+ 
+ const ASSET_LOGO: &[u8] = include_bytes!("../../assets/logo.jpg");
+ const ASSET_FONT: &[u8] = include_bytes!("../../assets/Exo2-Light.otf");
+-const CACHE_VERSION: &str = "ui-v1";
++const CACHE_VERSION: &str = "ui-u5a-1";
+ 
+ const ASSET_OPS: [RenderOp; 2] = [
+     RenderOp::LoadAssetConst {

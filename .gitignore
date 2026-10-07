@@ -1,0 +1,15 @@
+# downloaded sources, build trees and outputs
+build/
+out/
+backups/
+# vendor files you supply yourself (blobs/README.md)
+blobs/*
+!blobs/README.md
+# loader build outputs
+loader/*.o
+loader/*.elf
+loader/*.bin
+loader/*.img
+loader/*.disasm.txt
+__pycache__/
+.DS_Store

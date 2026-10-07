@@ -1,0 +1,148 @@
+Date: Wed, 2 Sep 2026 18:49:20 +0200
+Subject: [PATCH 6/6] phy: sun4i-usb: program the V821 PHY PLL and tuning
+
+The V821 uses the newer VC_EN/VC_CLK test-point protocol rather than the
+protocol used by older sunxi PHYs. Apply the required internal PHY PLL
+initialization and program the optional PHY tuning values supplied by OF.
+
+Missing OF tuning values are left untouched, allowing the SoC description
+to provide defaults and board descriptions to override only the values that
+differ.
+
+Upstream-Status: Pending
+---
+ drivers/phy/allwinner/phy-sun4i-usb.c | 90 ++++++++++++++++++++++++++++++++++-
+ 1 file changed, 88 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/phy/allwinner/phy-sun4i-usb.c b/drivers/phy/allwinner/phy-sun4i-usb.c
+index 1bdc4d216..fc3e49198 100644
+--- a/drivers/phy/allwinner/phy-sun4i-usb.c
++++ b/drivers/phy/allwinner/phy-sun4i-usb.c
+@@ -202,6 +202,12 @@ struct sun4i_usb_phy_data {
+ 	enum usb_dr_mode dr_mode;
+ 	spinlock_t reg_lock; /* guard access to phyctl reg */
+ 	int num_phys;
++	int new_res_tune;
++	int new_rise_tune;
++	int new_tx_tune;
++	int new_tx_fsls_tune;
++	int new_preemp_amp_tune;
++	int new_disc_thresh;
+ 	struct sun4i_usb_phy {
+ 		struct phy *phy;
+ 		void __iomem *pmu;
+@@ -313,8 +318,8 @@ static void sun4i_usb_phy_write(struct sun4i_usb_phy *phy, u32 addr, u32 data,
+ 	spin_unlock_irqrestore(&phy_data->reg_lock, flags);
+ }
+ 
+-static void __maybe_unused new_usb_phy_write(struct sun4i_usb_phy *phy,
+-					     u32 addr, u32 data, int len)
++static void new_usb_phy_write(struct sun4i_usb_phy *phy, u32 addr, u32 data,
++			      int len)
+ {
+ 	struct sun4i_usb_phy_data *phy_data = to_sun4i_usb_phy_data(phy);
+ 	void __iomem *phyctl = phy_data->base + phy_data->cfg->phyctl_offset;
+@@ -351,6 +357,61 @@ static void __maybe_unused new_usb_phy_write(struct sun4i_usb_phy *phy,
+ 	spin_unlock_irqrestore(&phy_data->reg_lock, flags);
+ }
+ 
++static void new_usb_phy_set_resistance(struct sun4i_usb_phy *phy,
++					 u32 resistance)
++{
++	/*
++	 * Select the software resistance trim and make sure the hardware
++	 * calibration path is inactive before updating it.
++	 */
++	new_usb_phy_write(phy, NEW_PHY_RCAL_SOFT_EN, 0, 1);
++	new_usb_phy_write(phy, NEW_PHY_RCAL_EN, 0, 1);
++	new_usb_phy_write(phy, NEW_PHY_RCAL_ON, 0, 1);
++	new_usb_phy_write(phy, NEW_PHY_RCAL_SOFT_TRIM, resistance, 4);
++	new_usb_phy_write(phy, NEW_PHY_RCAL_SOFT_EN, 1, 1);
++}
++
++static void new_usb_phy_configure(struct sun4i_usb_phy *phy)
++{
++	struct sun4i_usb_phy_data *data = to_sun4i_usb_phy_data(phy);
++
++	new_usb_phy_write(phy, NEW_PHY_PLL_CP, 0x3f, 6);
++	new_usb_phy_write(phy, NEW_PHY_PLL_VCO_GAIN, 0, 3);
++
++	if (clk_get_rate(phy->clk) == 24000000)
++		new_usb_phy_write(phy, NEW_PHY_PLL_N, 20, 8);
++
++	if (data->new_rise_tune >= 0)
++		new_usb_phy_write(phy, NEW_PHY_TX_RISE_TUNE,
++				  data->new_rise_tune, 2);
++	if (data->new_tx_tune >= 0)
++		new_usb_phy_write(phy, NEW_PHY_TX_TUNE,
++				  data->new_tx_tune, 4);
++	if (data->new_tx_fsls_tune >= 0)
++		new_usb_phy_write(phy, NEW_PHY_TX_FSLS_TUNE,
++				  data->new_tx_fsls_tune, 1);
++	if (data->new_preemp_amp_tune >= 0)
++		new_usb_phy_write(phy, NEW_PHY_TX_PREEMP_AMP_TUNE,
++				  data->new_preemp_amp_tune, 2);
++	if (data->new_res_tune >= 0)
++		new_usb_phy_set_resistance(phy,
++					    data->new_res_tune);
++	if (data->new_disc_thresh >= 0)
++		new_usb_phy_write(phy, NEW_PHY_DISC_THRESH,
++				  data->new_disc_thresh, 3);
++}
++
++static int new_usb_phy_read_property(struct device_node *np,
++				     const char *property)
++{
++	u32 value;
++
++	if (of_property_read_u32(np, property, &value))
++		return -1;
++
++	return value;
++}
++
+ static void sun4i_usb_phy_passby(struct sun4i_usb_phy *phy, int enable)
+ {
+ 	struct sun4i_usb_phy_data *phy_data = to_sun4i_usb_phy_data(phy);
+@@ -473,6 +534,9 @@ static int sun4i_usb_phy_init(struct phy *_phy)
+ 				    data->cfg->disc_thresh, 2);
+ 	}
+ 
++	if (data->cfg->vcbus && phy->index == 0)
++		new_usb_phy_configure(phy);
++
+ 	sun4i_usb_phy_passby(phy, 1);
+ 
+ 	if (phy->index == 0) {
+@@ -904,6 +968,28 @@ static int sun4i_usb_phy_probe(struct platform_device *pdev)
+ 	if (!data->cfg)
+ 		return -EINVAL;
+ 
++	if (data->cfg->vcbus) {
++		data->new_res_tune = new_usb_phy_read_property(
++			np, "allwinner,res-tune");
++		data->new_rise_tune = new_usb_phy_read_property(
++			np, "allwinner,rise-tune");
++		data->new_tx_tune = new_usb_phy_read_property(
++			np, "allwinner,tx-tune");
++		data->new_tx_fsls_tune = new_usb_phy_read_property(
++			np, "allwinner,tx-fsls-tune");
++		data->new_preemp_amp_tune = new_usb_phy_read_property(
++			np, "allwinner,preemp-amp-tune");
++		data->new_disc_thresh = new_usb_phy_read_property(
++			np, "allwinner,disc-thresh");
++
++		dev_info(dev,
++			 "V821 PHY OF tuning: res=%d rise=%d tx=%d tx_fsls=%d preemp_amp=%d disc_thresh=%d\n",
++			 data->new_res_tune, data->new_rise_tune,
++			 data->new_tx_tune, data->new_tx_fsls_tune,
++			 data->new_preemp_amp_tune,
++			 data->new_disc_thresh);
++	}
++
+ 	data->base = devm_platform_ioremap_resource_byname(pdev, "phy_ctrl");
+ 	if (IS_ERR(data->base))
+ 		return PTR_ERR(data->base);
+
+-- 
+2.55.0

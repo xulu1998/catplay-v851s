@@ -1,0 +1,27 @@
+#!/bin/sh
+# Saves the box state and the catplay log to /persist/log/<kind>-<N>.log, rewritten atomically each time, so
+# the newest state survives a power-off. N = boot count mod 5 for periodic snapshots, mod 2 for the event
+# ones (each file is about 50 KiB compressed and /persist is 1 MiB).
+# Usage: u5a-snapshot <kind> [reason]     kind: snap (periodic), usb (car connect/disconnect), crash
+kind=${1:-snap}; reason=${2:-}
+keep=5; [ "$kind" = snap ] || keep=2
+n=$(( $(cat /persist/bootcount 2>/dev/null || echo 0) % keep ))
+mode=$(sed -n 's/.*u5a\.mode=\([a-z]*\).*/\1/p' /proc/cmdline)
+out=/persist/log/$kind-$n.log
+mkdir -p /persist/log
+{
+    echo "=== uptime $(cut -d' ' -f1 /proc/uptime) boot #$(cat /persist/bootcount 2>/dev/null) mode ${mode:-bench} $kind $reason"
+    echo "=== usb role: $(cat /sys/class/usb_role/*/role 2>/dev/null)  udc: $(cat /sys/class/udc/*/state 2>/dev/null)"
+    echo "=== links"; for d in /sys/class/net/usb* /sys/class/net/wlan0; do [ -d $d ] || continue
+        echo "$(basename $d) drv=$(basename $(readlink $d/device/driver) 2>/dev/null) $(for c in rx_packets tx_packets rx_bytes tx_bytes multicast rx_errors tx_errors rx_dropped tx_dropped; do printf '%s=%s ' $c $(cat $d/statistics/$c); done)"; done
+    echo "=== memory"; free
+    echo "=== ipv6"; ip -6 addr 2>&1
+    echo "=== ps"; ps | grep -vE '\[|ps$'
+    echo "=== dmesg (no RTW)"; dmesg | grep -v 'RTW:' | tail -n 150
+    echo "=== catplay head"; head -c 65536 /run/u5a/catplay.log
+    echo "=== catplay tail"; tail -c 262144 /run/u5a/catplay.log
+    echo "=== touch (HID), exits and errors, whole session"
+    cat /run/u5a/catplay.log.1 /run/u5a/catplay.log 2>/dev/null | grep -E 'U5A HID|HidSendReport|ERROR|U5A-CATPLAY-EXIT|panicked' | tail -n 200
+} > $out.tmp 2>&1 && mv $out.tmp $out
+[ "$kind" = snap ] && cp /run/u5a/boot.log /persist/log/boot-$n.log 2>/dev/null
+sync

@@ -1,0 +1,103 @@
+From 1e1f0bfe25ce0567fc95d54f317ac17e3c989332 Mon Sep 17 00:00:00 2001
+From: xulu1998 <58898570+xulu1998@users.noreply.github.com>
+Date: Wed, 7 Oct 2026 08:55:40 -0400
+Subject: [PATCH] catplay_carplay_tx_gadget: re-arm the legacy self-invite
+ after a car session ends
+
+Head units without the CARPLAY_CONTROL flag never invite on their own; the
+ctrl server invites itself once per USB session. When the CarPlay session to
+the car ends while USB stays up (for example the iPhone's Wi-Fi is turned off
+and CarManager exits), the car is never invited again: on a 2024 Kia
+Sportage the screen froze on the last frame and the car stopped using the
+adapter until it was replugged.
+
+When a car session that lasted at least 10 s ends, allow the self-invite
+again, so the car comes back to the connection screen and the phone can
+reconnect. Shorter sessions (rejected or failed handshakes) do not re-arm it,
+so a car that refuses cannot cause an invite loop.
+
+Upstream-Status: Pending
+
+---
+ .../src/ctrl/cp_ctrl_server.rs                |  6 ++++
+ catplay_carplay_tx_gadget/src/client.rs       | 29 +++++++++++++++++++
+ 2 files changed, 35 insertions(+)
+
+diff --git a/carplay/catplay_carplay/src/ctrl/cp_ctrl_server.rs b/carplay/catplay_carplay/src/ctrl/cp_ctrl_server.rs
+index 0bbf3b7..197659a 100644
+--- a/carplay/catplay_carplay/src/ctrl/cp_ctrl_server.rs
++++ b/carplay/catplay_carplay/src/ctrl/cp_ctrl_server.rs
+@@ -97,6 +97,12 @@ impl CarPlayCtrlServer {
+         })
+     }
+ 
++    /// Lets a legacy head unit (no CARPLAY_CONTROL) be self-invited again on this USB session, after the
++    /// previous CarPlay session to it ended. Without this the car is never invited again until replug.
++    pub fn rearm_legacy_self_invite(&mut self) {
++        self.had_first_invite = false;
++    }
++
+     pub fn force_announce(&mut self) -> io::Result<()> {
+         if let Some(handle) = self.bonjour_handle_info.as_mut() {
+             handle.reannounce();
+diff --git a/catplay_carplay_tx_gadget/src/client.rs b/catplay_carplay_tx_gadget/src/client.rs
+index 5117786..bcb212f 100644
+--- a/catplay_carplay_tx_gadget/src/client.rs
++++ b/catplay_carplay_tx_gadget/src/client.rs
+@@ -42,10 +42,14 @@ pub struct CarPlayUsbClientGadget {
+ 
+     transmitting: Arc<Mutex<bool>>,
+     transmitting_end_notify: Notify,
++    transmitting_since: Option<Instant>,
+ }
+ 
+ impl CarPlayUsbClientGadget {
+     const RESTART_DELAY: Duration = Duration::from_millis(1000);
++    /// A CarPlay session to the car that lasted at least this long re-arms the legacy self-invite when it
++    /// ends; shorter ones (rejected or failing handshakes) do not, so they cannot loop.
++    const REARM_MIN_SESSION: Duration = Duration::from_secs(10);
+ 
+     pub fn new(
+         iphone_instance: &str,
+@@ -70,6 +74,7 @@ impl CarPlayUsbClientGadget {
+                 pending_transmitter_error: None,
+                 transmitting: Default::default(),
+                 transmitting_end_notify: Default::default(),
++                transmitting_since: None,
+             },
+             Ok(CarPlayUsbClientGadgetStatus::Initial),
+         ))
+@@ -326,6 +331,30 @@ impl Reconcilable for CarPlayUsbClientGadget {
+             }
+         }
+ 
++        // The car session ended (e.g. the iPhone went away) while USB stays up: legacy head units never
++        // invite on their own, so allow the self-invite again or the car is stuck until replug.
++        let transmitting = *self.transmitting.lock().unwrap();
++        match (transmitting, self.transmitting_since) {
++            (true, None) => {
++                self.transmitting_since.replace(Instant::now());
++            }
++            (false, Some(since)) => {
++                self.transmitting_since.take();
++                if since.elapsed() >= Self::REARM_MIN_SESSION {
++                    if let Some(ctrl_server) = self.ctrl_server.as_mut() {
++                        info!("Car session ended after {:?}; re-arming the legacy self-invite", since.elapsed());
++                        ctrl_server.rearm_legacy_self_invite();
++                    }
++                } else {
++                    warn!(
++                        "Car session ended after {:?}; not re-arming the legacy self-invite",
++                        since.elapsed()
++                    );
++                }
++            }
++            _ => {}
++        }
++
+         let now = Instant::now();
+         if (self.last_announce.is_none() || now - self.last_announce.unwrap() > Self::ANNOUNCE_INTERVAL)
+             && let Some(ctrl_server) = self.ctrl_server.as_mut()
+-- 
+2.54.0 (Apple Git-157)
+

@@ -1,0 +1,55 @@
+From: catplay-v851s
+Subject: [PATCH] host: build the kernel on macOS
+
+scripts/mod/file2alias.c: avoid the uuid_t clash with the macOS SDK.
+usr/gen_init_cpio.c: O_LARGEFILE and copy_file_range do not exist on macOS.
+No effect on the target kernel.
+
+---
+diff -ruN a/scripts/mod/file2alias.c b/scripts/mod/file2alias.c
+--- a/scripts/mod/file2alias.c	2026-10-06 22:28:21
++++ b/scripts/mod/file2alias.c	2026-10-06 22:28:21
+@@ -107,6 +107,9 @@
+ 	__u8 b[16];
+ } guid_t;
+ 
++#ifdef __APPLE__
++#define uuid_t linux_uuid_t
++#endif
+ typedef struct {
+ 	__u8 b[16];
+ } uuid_t;
+@@ -122,6 +125,9 @@
+  * even potentially has different endianness and word sizes, since
+  * we handle those differences explicitly below */
+ #include "../../include/linux/mod_devicetable.h"
++#ifdef __APPLE__
++#undef uuid_t
++#endif
+ 
+ struct devtable {
+ 	const char *device_id;
+diff -ruN a/usr/gen_init_cpio.c b/usr/gen_init_cpio.c
+--- a/usr/gen_init_cpio.c	2026-10-06 22:28:21
++++ b/usr/gen_init_cpio.c	2026-10-06 22:28:21
+@@ -14,6 +14,20 @@
+ #include <ctype.h>
+ #include <limits.h>
+ 
++#ifdef __APPLE__
++#ifndef O_LARGEFILE
++#define O_LARGEFILE 0
++#endif
++static ssize_t copy_file_range(int fd_in, off_t *off_in, int fd_out,
++                               off_t *off_out, size_t len, unsigned int flags)
++{
++    (void)fd_in; (void)off_in; (void)fd_out; (void)off_out;
++    (void)len; (void)flags;
++    errno = ENOSYS;
++    return -1;
++}
++#endif
++
+ /*
+  * Original work by Jeff Garzik
+  *

@@ -1,0 +1,165 @@
+Date: Wed, 2 Sep 2026 11:54:52 +0200
+Subject: [PATCH 1/6] phy: sun4i-usb: add VCBUS PHY register map
+
+Newer Allwinner USB PHYs use a different internal test-point register map
+and access protocol from the PHYs currently handled by the driver. This
+category of devices is also sometimes referred to as VCBUS.
+
+Describe the observed register map and add the corresponding serial write
+helper and configuration quirk. Keep this separate from SoC integration so
+the VCBUS register interface is introduced independently of its first user.
+
+Upstream-Status: Pending
+---
+ drivers/phy/allwinner/phy-sun4i-usb.c | 123 ++++++++++++++++++++++++++
+ 1 file changed, 123 insertions(+)
+
+diff --git a/drivers/phy/allwinner/phy-sun4i-usb.c b/drivers/phy/allwinner/phy-sun4i-usb.c
+index e2fbf8ccf..775aa9c40 100644
+--- a/drivers/phy/allwinner/phy-sun4i-usb.c
++++ b/drivers/phy/allwinner/phy-sun4i-usb.c
+@@ -76,6 +76,90 @@
+ #define PHY_DISCON_TH_SEL		0x2a
+ #define PHY_SQUELCH_DETECT		0x3c
+ 
++/*
++ * Internal USB PHY test-point register map.
++ *
++ * Internal addresses are bit addresses. Multi-bit fields are written
++ * LSB-first starting at the address specified below.
++ */
++
++/* PLL */
++#define NEW_PHY_PLL_CP			0x03
++#define NEW_PHY_PLL_STATUS		0x09
++#define NEW_PHY_PLL_N			0x0b
++#define NEW_PHY_PLL_PREDIV		0x16
++#define NEW_PHY_PLL_VCO_GAIN		0x1c
++
++/*
++ * COM_TUNE, formally 13 bits starting at 0x30:
++ *
++ * 12  11 | 10  |  9  | 8   7   6 | 5   4   3 | 2   1   0
++ * +-------+-----+-----+-----------+-----------+-----------+
++ * |   ?   | ST1 | ST0 | COMM_VREF |  COMPDIS  | COMM_IREF |
++ * +-------+-----+-----+-----------+-----------+-----------+
++ * 3c  3b   3a    39    38  37  36   35 34 33   32 31 30
++ *
++ * The field is formally 13 bits wide, but the upper two bits
++ * COM_TUNE[12:11] have never been observed to be used.
++ *
++ * ST0 = common analog bias standby control
++ * ST1 = common comparator standby control
++ */
++#define NEW_PHY_COM_TUNE		0x30
++#define NEW_PHY_COMM_IREF_TUNE		0x30
++#define NEW_PHY_COMM_COMPDIS_TUNE	0x33
++#define NEW_PHY_COMM_VREF_TUNE		0x36
++#define NEW_PHY_COM_STANDBY_BIAS	0x39
++#define NEW_PHY_COM_STANDBY_COMPARATORS	0x3a
++
++/* Resistance calibration */
++#define NEW_PHY_RCAL_ON			0x40
++#define NEW_PHY_RCAL_EN			0x41
++#define NEW_PHY_RCAL_DONE		0x42
++#define NEW_PHY_RCAL_SOFT_EN		0x43
++#define NEW_PHY_RCAL_SOFT_TRIM		0x44
++#define NEW_PHY_RCAL_RESULT		0x49
++
++/*
++ * TX_TUNE, 14 observed bits starting at 0x60:
++ *
++ * 13   | 12  11 | 10  | 9   8 | 7   6 | 5   4 | 3   2   1   0
++ * +-----+--------+-----+-------+-------+-------+----------------+
++ * |FSLS0| TX_RES |PULSE| RISE  | HS_XV |PREEMP |    TX_VREF     |
++ * |     |        |     |       |       |  AMP  |                |
++ * +-----+--------+-----+-------+-------+-------+----------------+
++ * 6d     6c  6b   6a    69 68   67 66   65 64   63 62 61 60
++ *
++ * Bit 13 is most likely TXFSLSTUNE[0]. It is explicitly programmed
++ * to 1 by the vendor preset 0x238a.
++ *
++ * Synopsys PHYs normally expose TXFSLSTUNE as a four-bit field:
++ *
++ * 16  15  14  13
++ * +---------------+
++ * |  TXFSLSTUNE   |
++ * +---------------+
++ * 70  6f  6e  6d
++ *
++ * TXFSLSTUNE[0] at 0x6d is observed and programmed to 1.
++ * The possible TXFSLSTUNE[3:1] bits at 0x6e through 0x70 have
++ * not been observed in the V821 vendor programming sequences.
++ */
++#define NEW_PHY_TX_TUNE			0x60
++#define NEW_PHY_TX_VREF_TUNE		0x60
++#define NEW_PHY_TX_PREEMP_AMP_TUNE	0x64
++#define NEW_PHY_TX_HS_XV_TUNE		0x66
++#define NEW_PHY_TX_RISE_TUNE		0x68
++#define NEW_PHY_TX_PREEMP_PULSE_TUNE	0x6a
++#define NEW_PHY_TX_RES_TUNE		0x6b
++#define NEW_PHY_TX_FSLS_TUNE		0x6d
++
++/* Disconnect detection */
++#define NEW_PHY_DISC_THRESH		0x83
++
++/* Analog bias */
++#define NEW_PHY_MBIAS			0x92
++
+ /* A83T specific control bits for PHY0 */
+ #define PHY_CTL_VBUSVLDEXT		BIT(5)
+ #define PHY_CTL_SIDDQ			BIT(3)
+@@ -96,5 +180,6 @@ struct sun4i_usb_phy_cfg {
+ 	u8 phyctl_offset;
+ 	bool dedicated_clocks;
++	bool vcbus;
+ 	bool phy0_dual_route;
+ 	bool needs_phy2_siddq;
+ 	bool siddq_in_base;
+@@ -226,6 +311,44 @@ static void sun4i_usb_phy_write(struct sun4i_usb_phy *phy, u32 addr, u32 data,
+ 	spin_unlock_irqrestore(&phy_data->reg_lock, flags);
+ }
+ 
++static void __maybe_unused new_usb_phy_write(struct sun4i_usb_phy *phy,
++					     u32 addr, u32 data, int len)
++{
++	struct sun4i_usb_phy_data *phy_data = to_sun4i_usb_phy_data(phy);
++	void __iomem *phyctl = phy_data->base + phy_data->cfg->phyctl_offset;
++	unsigned long flags;
++	u8 val;
++	int i;
++
++	spin_lock_irqsave(&phy_data->reg_lock, flags);
++
++	for (i = 0; i < len; i++) {
++		val = readb(phyctl);
++		val |= BIT(1); /* VC_EN */
++		writeb(val, phyctl);
++
++		writeb(addr + i, phyctl + 1);
++
++		val = readb(phyctl);
++		val &= ~BIT(0); /* VC_CLK */
++		val &= ~PHYCTL_DATA;
++		if (data & BIT(0))
++			val |= PHYCTL_DATA;
++		writeb(val, phyctl);
++
++		writeb(val | BIT(0), phyctl);
++		writeb(val & ~BIT(0), phyctl);
++
++		val = readb(phyctl);
++		val &= ~BIT(1);
++		writeb(val, phyctl);
++
++		data >>= 1;
++	}
++
++	spin_unlock_irqrestore(&phy_data->reg_lock, flags);
++}
++
+ static void sun4i_usb_phy_passby(struct sun4i_usb_phy *phy, int enable)
+ {
+ 	struct sun4i_usb_phy_data *phy_data = to_sun4i_usb_phy_data(phy);
+-- 
+2.55.0

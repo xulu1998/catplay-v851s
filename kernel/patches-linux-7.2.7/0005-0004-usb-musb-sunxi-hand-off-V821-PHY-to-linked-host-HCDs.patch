@@ -1,0 +1,410 @@
+Date: Sat, 15 Aug 2026 06:15:00 +0200
+Subject: [PATCH 4/4] usb: musb: sunxi: hand off V821 PHY to linked host HCDs
+
+V821 routes one physical USB port either to MUSB or to its EHCI/OHCI
+pair. Quiesce the gadget-side session and release the shared PHY/reset
+before creating the host controllers, matching the lifetime of the vendor
+glue. Reacquire those resources when returning to device mode.
+
+Both generic HCD drivers prefer asynchronous probing. Creating EHCI and
+OHCI sequentially therefore does not serialize usb_add_hcd(), and the two
+controllers can initialize their shared port concurrently. Allocate both
+platform devices first and add an OHCI-to-EHCI device link, so OHCI probing
+starts only after EHCI has bound successfully.
+
+Upstream-Status: Pending
+---
+ drivers/usb/musb/sunxi.c | 283 ++++++++++++++++++++++++++++++++++-----
+ 1 file changed, 253 insertions(+), 30 deletions(-)
+
+diff --git a/drivers/usb/musb/sunxi.c b/drivers/usb/musb/sunxi.c
+index fa5f908..e1419ca 100644
+--- a/drivers/usb/musb/sunxi.c
++++ b/drivers/usb/musb/sunxi.c
+@@ -9,6 +9,7 @@
+  */
+ 
+ #include <linux/clk.h>
++#include <linux/dma-mapping.h>
+ #include <linux/err.h>
+ #include <linux/extcon.h>
+ #include <linux/io.h>
+@@ -16,6 +17,7 @@
+ #include <linux/module.h>
+ #include <linux/mutex.h>
+ #include <linux/of.h>
++#include <linux/of_irq.h>
+ #include <linux/of_platform.h>
+ #include <linux/phy/phy-sun4i-usb.h>
+ #include <linux/platform_device.h>
+@@ -104,6 +106,8 @@ struct sunxi_glue {
+ 	/* Serializes role changes and host controller lifetime. */
+ 	struct mutex		role_lock;
+ 	enum usb_role		role;
++	bool			phy_initialized;
++	bool			usb_reset_deasserted;
+ };
+ 
+ /* phy_power_on / off may sleep, so we use a workqueue  */
+@@ -114,6 +118,8 @@ static void sunxi_musb_work(struct work_struct *work)
+ 
+ 	if (!test_bit(SUNXI_MUSB_FL_ENABLED, &glue->flags))
+ 		return;
++	if (!READ_ONCE(glue->phy_initialized))
++		return;
+ 
+ 	if (test_and_clear_bit(SUNXI_MUSB_FL_HOSTMODE_PEND, &glue->flags)) {
+ 		struct musb *musb = glue->musb;
+@@ -250,8 +256,8 @@ static void sunxi_musb_remove_host_controllers(struct sunxi_glue *glue)
+ }
+ 
+ static struct platform_device *
+-sunxi_musb_add_host_controller(struct sunxi_glue *glue,
+-			       const char *compatible)
++sunxi_musb_alloc_host_controller(struct sunxi_glue *glue,
++				 const char *compatible)
+ {
+ 	struct platform_device *pdev;
+ 	struct device_node *np;
+@@ -260,14 +266,229 @@ sunxi_musb_add_host_controller(struct sunxi_glue *glue,
+ 	if (!np)
+ 		return ERR_PTR(-ENODEV);
+ 
+-	pdev = of_platform_device_create(np, NULL, glue->dev);
++	if (!of_device_is_available(np) ||
++	    of_node_test_and_set_flag(np, OF_POPULATED)) {
++		of_node_put(np);
++		return ERR_PTR(-EBUSY);
++	}
++
++	pdev = of_device_alloc(np, NULL, glue->dev);
++	if (!pdev) {
++		of_node_clear_flag(np, OF_POPULATED);
++		of_node_put(np);
++		return ERR_PTR(-ENOMEM);
++	}
++
++	pdev->dev.coherent_dma_mask = DMA_BIT_MASK(32);
++	if (!pdev->dev.dma_mask)
++		pdev->dev.dma_mask = &pdev->dev.coherent_dma_mask;
++	pdev->dev.bus = &platform_bus_type;
++	of_msi_configure(&pdev->dev, np);
+ 	of_node_put(np);
+-	if (!pdev)
+-		return ERR_PTR(-ENODEV);
+ 
+ 	return pdev;
+ }
+ 
++static void sunxi_musb_put_host_controller(struct platform_device *pdev)
++{
++	of_node_clear_flag(pdev->dev.of_node, OF_POPULATED);
++	platform_device_put(pdev);
++}
++
++static int sunxi_musb_add_host_controllers(struct sunxi_glue *glue)
++{
++	struct platform_device *ehci, *ohci;
++	struct device_link *link;
++	int ret;
++
++	ehci = sunxi_musb_alloc_host_controller(glue, "generic-ehci");
++	if (IS_ERR(ehci))
++		return PTR_ERR(ehci);
++
++	ohci = sunxi_musb_alloc_host_controller(glue, "generic-ohci");
++	if (IS_ERR(ohci)) {
++		ret = PTR_ERR(ohci);
++		sunxi_musb_put_host_controller(ehci);
++		return ret;
++	}
++
++	ret = of_device_add(ehci);
++	if (ret)
++		goto err_put_both;
++
++	/* OHCI must not probe until EHCI has completed usb_add_hcd(). */
++	link = device_link_add(&ohci->dev, &ehci->dev,
++			       DL_FLAG_AUTOPROBE_CONSUMER);
++	if (!link) {
++		ret = -ENOMEM;
++		goto err_unregister_ehci;
++	}
++
++	ret = of_device_add(ohci);
++	if (ret) {
++		device_link_del(link);
++		goto err_unregister_ehci;
++	}
++
++	glue->ehci_pdev = ehci;
++	glue->ohci_pdev = ohci;
++	return 0;
++
++err_unregister_ehci:
++	of_platform_device_destroy(&ehci->dev, NULL);
++	sunxi_musb_put_host_controller(ohci);
++	return ret;
++
++err_put_both:
++	sunxi_musb_put_host_controller(ohci);
++	sunxi_musb_put_host_controller(ehci);
++	return ret;
++}
++
++static void sunxi_musb_quiesce_device(struct sunxi_glue *glue)
++{
++	struct musb *musb = glue->musb;
++	unsigned long flags;
++	u8 devctl, power;
++
++	if (!musb)
++		return;
++
++	spin_lock_irqsave(&musb->lock, flags);
++	power = readb(musb->mregs + SUNXI_MUSB_POWER);
++	writeb(power & ~MUSB_POWER_SOFTCONN,
++	       musb->mregs + SUNXI_MUSB_POWER);
++	devctl = readb(musb->mregs + SUNXI_MUSB_DEVCTL);
++	writeb(devctl & ~MUSB_DEVCTL_SESSION,
++	       musb->mregs + SUNXI_MUSB_DEVCTL);
++	musb->xceiv->otg->state = OTG_STATE_B_IDLE;
++	MUSB_DEV_MODE(musb);
++	spin_unlock_irqrestore(&musb->lock, flags);
++}
++
++static void sunxi_musb_resume_device(struct sunxi_glue *glue)
++{
++	struct musb *musb = glue->musb;
++	unsigned long flags;
++	u8 devctl;
++
++	if (!musb)
++		return;
++
++	spin_lock_irqsave(&musb->lock, flags);
++	MUSB_DEV_MODE(musb);
++	musb->xceiv->otg->state = OTG_STATE_B_IDLE;
++	devctl = readb(musb->mregs + SUNXI_MUSB_DEVCTL);
++	writeb(devctl | MUSB_DEVCTL_SESSION,
++	       musb->mregs + SUNXI_MUSB_DEVCTL);
++	spin_unlock_irqrestore(&musb->lock, flags);
++}
++
++static int sunxi_musb_release_device_resources(struct sunxi_glue *glue)
++{
++	bool phy_was_on;
++	int ret;
++
++	if (!glue->phy_initialized)
++		return 0;
++
++	sunxi_musb_quiesce_device(glue);
++
++	ret = phy_set_mode(glue->phy, PHY_MODE_USB_HOST);
++	if (ret) {
++		sunxi_musb_resume_device(glue);
++		return ret;
++	}
++
++	WRITE_ONCE(glue->phy_initialized, false);
++	cancel_work_sync(&glue->work);
++	clear_bit(SUNXI_MUSB_FL_HOSTMODE, &glue->flags);
++	clear_bit(SUNXI_MUSB_FL_HOSTMODE_PEND, &glue->flags);
++	clear_bit(SUNXI_MUSB_FL_PHY_MODE_PEND, &glue->flags);
++	clear_bit(SUNXI_MUSB_FL_VBUS_ON, &glue->flags);
++
++	phy_was_on = test_and_clear_bit(SUNXI_MUSB_FL_PHY_ON, &glue->flags);
++	if (phy_was_on) {
++		ret = phy_power_off(glue->phy);
++		if (ret) {
++			set_bit(SUNXI_MUSB_FL_PHY_ON, &glue->flags);
++			goto err_restore_initialized;
++		}
++	}
++
++	ret = phy_exit(glue->phy);
++	if (ret) {
++		if (phy_was_on && !phy_power_on(glue->phy))
++			set_bit(SUNXI_MUSB_FL_PHY_ON, &glue->flags);
++		goto err_restore_initialized;
++	}
++
++	if (glue->rst_usb && glue->usb_reset_deasserted) {
++		ret = reset_control_assert(glue->rst_usb);
++		if (ret)
++			goto err_reinit_phy;
++		glue->usb_reset_deasserted = false;
++	}
++
++	return 0;
++
++err_reinit_phy:
++	if (!phy_init(glue->phy)) {
++		if (phy_was_on && !phy_power_on(glue->phy))
++			set_bit(SUNXI_MUSB_FL_PHY_ON, &glue->flags);
++		WRITE_ONCE(glue->phy_initialized, true);
++	}
++	return ret;
++
++err_restore_initialized:
++	WRITE_ONCE(glue->phy_initialized, true);
++	return ret;
++}
++
++static int sunxi_musb_acquire_device_resources(struct sunxi_glue *glue,
++					       enum phy_mode mode)
++{
++	int ret;
++
++	if (glue->rst_usb && !glue->usb_reset_deasserted) {
++		ret = reset_control_deassert(glue->rst_usb);
++		if (ret)
++			return ret;
++		glue->usb_reset_deasserted = true;
++	}
++
++	if (!glue->phy_initialized) {
++		ret = phy_init(glue->phy);
++		if (ret)
++			goto err_assert_usb_reset;
++		WRITE_ONCE(glue->phy_initialized, true);
++	}
++
++	ret = phy_set_mode(glue->phy, mode);
++	if (ret)
++		goto err_exit_phy;
++
++	glue->phy_mode = mode;
++	if (mode == PHY_MODE_USB_DEVICE) {
++		set_bit(SUNXI_MUSB_FL_VBUS_ON, &glue->flags);
++		sunxi_musb_resume_device(glue);
++	} else {
++		clear_bit(SUNXI_MUSB_FL_VBUS_ON, &glue->flags);
++	}
++	schedule_work(&glue->work);
++	return 0;
++
++err_exit_phy:
++	WRITE_ONCE(glue->phy_initialized, false);
++	phy_exit(glue->phy);
++err_assert_usb_reset:
++	if (glue->rst_usb && glue->usb_reset_deasserted) {
++		reset_control_assert(glue->rst_usb);
++		glue->usb_reset_deasserted = false;
++	}
++	return ret;
++}
++
+ static int sunxi_musb_role_switch_set(struct usb_role_switch *sw,
+ 				      enum usb_role role)
+ {
+@@ -281,28 +502,13 @@ static int sunxi_musb_role_switch_set(struct usb_role_switch *sw,
+ 
+ 	switch (role) {
+ 	case USB_ROLE_HOST:
+-		ret = phy_set_mode(glue->phy, PHY_MODE_USB_HOST);
++		ret = sunxi_musb_release_device_resources(glue);
+ 		if (ret)
+-			goto out;
+-
+-		/* The PHY worker ends the gadget session before re-routing PHY0. */
+-		msleep(100);
+-		glue->ehci_pdev = sunxi_musb_add_host_controller(glue,
+-								 "generic-ehci");
+-		if (IS_ERR(glue->ehci_pdev)) {
+-			ret = PTR_ERR(glue->ehci_pdev);
+-			glue->ehci_pdev = NULL;
+ 			goto restore_device;
+-		}
+ 
+-		glue->ohci_pdev = sunxi_musb_add_host_controller(glue,
+-								 "generic-ohci");
+-		if (IS_ERR(glue->ohci_pdev)) {
+-			ret = PTR_ERR(glue->ohci_pdev);
+-			glue->ohci_pdev = NULL;
+-			sunxi_musb_remove_host_controllers(glue);
++		ret = sunxi_musb_add_host_controllers(glue);
++		if (ret)
+ 			goto restore_device;
+-		}
+ 		break;
+ 
+ 	case USB_ROLE_DEVICE:
+@@ -313,7 +519,7 @@ static int sunxi_musb_role_switch_set(struct usb_role_switch *sw,
+ 		mode = PHY_MODE_USB_OTG;
+ remove_host:
+ 		sunxi_musb_remove_host_controllers(glue);
+-		ret = phy_set_mode(glue->phy, mode);
++		ret = sunxi_musb_acquire_device_resources(glue, mode);
+ 		if (ret)
+ 			goto out;
+ 		break;
+@@ -327,7 +533,8 @@ remove_host:
+ 	goto out;
+ 
+ restore_device:
+-	phy_set_mode(glue->phy, PHY_MODE_USB_DEVICE);
++	if (sunxi_musb_acquire_device_resources(glue, PHY_MODE_USB_DEVICE))
++		dev_err(glue->dev, "failed to restore device-side USB resources\n");
+ out:
+ 	mutex_unlock(&glue->role_lock);
+ 	return ret;
+@@ -409,6 +616,8 @@ static int sunxi_musb_init(struct musb *musb)
+ 	ret = reset_control_deassert(glue->rst_usb);
+ 	if (ret)
+ 		goto error_otg_reset_assert;
++	if (glue->rst_usb)
++		glue->usb_reset_deasserted = true;
+ 
+ 	writeb(SUNXI_MUSB_VEND0_PIO_MODE, musb->mregs + SUNXI_MUSB_VEND0);
+ 
+@@ -423,6 +632,7 @@ static int sunxi_musb_init(struct musb *musb)
+ 	ret = phy_init(glue->phy);
+ 	if (ret)
+ 		goto error_usb_reset_assert;
++	glue->phy_initialized = true;
+ 
+ 	musb->isr = sunxi_musb_interrupt;
+ 
+@@ -438,9 +648,15 @@ static int sunxi_musb_init(struct musb *musb)
+ 	return 0;
+ 
+ error_phy_exit:
+-	phy_exit(glue->phy);
++	if (glue->phy_initialized) {
++		phy_exit(glue->phy);
++		glue->phy_initialized = false;
++	}
+ error_usb_reset_assert:
+-	reset_control_assert(glue->rst_usb);
++	if (glue->usb_reset_deasserted) {
++		reset_control_assert(glue->rst_usb);
++		glue->usb_reset_deasserted = false;
++	}
+ error_otg_reset_assert:
+ 	reset_control_assert(glue->rst_otg);
+ 	if (test_bit(SUNXI_MUSB_FL_HAS_RESET, &glue->flags))
+@@ -470,12 +686,19 @@ static int sunxi_musb_exit(struct musb *musb)
+ 	}
+ 
+ 	cancel_work_sync(&glue->work);
+-	if (test_bit(SUNXI_MUSB_FL_PHY_ON, &glue->flags))
++	if (glue->phy_initialized &&
++	    test_bit(SUNXI_MUSB_FL_PHY_ON, &glue->flags))
+ 		phy_power_off(glue->phy);
+ 
+-	phy_exit(glue->phy);
++	if (glue->phy_initialized) {
++		phy_exit(glue->phy);
++		glue->phy_initialized = false;
++	}
+ 
+-	reset_control_assert(glue->rst_usb);
++	if (glue->usb_reset_deasserted) {
++		reset_control_assert(glue->rst_usb);
++		glue->usb_reset_deasserted = false;
++	}
+ 	reset_control_assert(glue->rst_otg);
+ 	if (test_bit(SUNXI_MUSB_FL_HAS_RESET, &glue->flags))
+ 		reset_control_assert(glue->rst);

@@ -1,0 +1,2829 @@
+From: catplay-v851s
+Subject: [PATCH] ARM: sunxi: V851S/V853 clocks, pinctrl, USB PHY and device trees
+
+SoC support taken from https://github.com/hbouhadji/prototype-v851s-port (05d826201092):
+CCU and R-CCU drivers, pinctrl, USB PHY config, mach-sunxi compatible, dt-bindings and the
+sun8i-v853.dtsi / board device trees it is built against. Applies on top of 0001-0013.
+
+---
+diff -ruN a/Documentation/devicetree/bindings/clock/allwinner,sun4i-a10-ccu.yaml b/Documentation/devicetree/bindings/clock/allwinner,sun4i-a10-ccu.yaml
+--- a/Documentation/devicetree/bindings/clock/allwinner,sun4i-a10-ccu.yaml	2026-10-06 22:28:21
++++ b/Documentation/devicetree/bindings/clock/allwinner,sun4i-a10-ccu.yaml	2026-10-06 22:28:21
+@@ -33,6 +33,8 @@
+       - allwinner,sun8i-r40-ccu
+       - allwinner,sun8i-v3-ccu
+       - allwinner,sun8i-v3s-ccu
++      - allwinner,sun8i-v853-ccu
++      - allwinner,sun8i-v853-r-ccu
+       - allwinner,sun9i-a80-ccu
+       - allwinner,sun20i-d1-ccu
+       - allwinner,sun20i-d1-r-ccu
+@@ -103,6 +105,7 @@
+       compatible:
+         enum:
+           - allwinner,sun20i-d1-ccu
++          - allwinner,sun8i-v853-ccu
+           - allwinner,sun50i-a100-ccu
+           - allwinner,sun50i-h6-ccu
+           - allwinner,sun50i-h616-ccu
+diff -ruN a/Documentation/devicetree/bindings/phy/allwinner,sun50i-a64-usb-phy.yaml b/Documentation/devicetree/bindings/phy/allwinner,sun50i-a64-usb-phy.yaml
+--- a/Documentation/devicetree/bindings/phy/allwinner,sun50i-a64-usb-phy.yaml	2026-10-06 22:28:21
++++ b/Documentation/devicetree/bindings/phy/allwinner,sun50i-a64-usb-phy.yaml	2026-10-06 22:28:21
+@@ -19,6 +19,7 @@
+       - enum:
+           - allwinner,sun20i-d1-usb-phy
+           - allwinner,sun50i-a64-usb-phy
++          - allwinner,sun8i-v853-usb-phy
+       - items:
+           - enum:
+               - allwinner,sun50i-a100-usb-phy
+diff -ruN a/arch/arm/boot/dts/allwinner/Makefile b/arch/arm/boot/dts/allwinner/Makefile
+--- a/arch/arm/boot/dts/allwinner/Makefile	2026-10-06 22:28:21
++++ b/arch/arm/boot/dts/allwinner/Makefile	2026-10-06 22:28:21
+@@ -267,6 +267,7 @@
+ 	sun8i-v3-sl631-imx179.dtb \
+ 	sun8i-v3s-anbernic-rg-nano.dtb \
+ 	sun8i-v3s-licheepi-zero.dtb \
++	sun8i-v851s-lizard.dtb \
+ 	sun8i-v3s-licheepi-zero-dock.dtb \
+ 	sun8i-v3s-netcube-kumquat.dtb \
+ 	sun8i-v40-bananapi-m2-berry.dtb
+@@ -281,3 +282,5 @@
+ 	suniv-f1c100s-licheepi-nano.dtb \
+ 	suniv-f1c200s-lctech-pi.dtb \
+ 	suniv-f1c200s-popstick-v1.1.dtb
++dtb-$(CONFIG_MACH_SUN8I) += sun8i-v851s-dongle-stage1.dtb
++dtb-$(CONFIG_MACH_SUN8I) += sun8i-v851s-u5a-wifi-64m.dtb
+diff -ruN a/arch/arm/boot/dts/allwinner/sun8i-v851s-lizard.dts b/arch/arm/boot/dts/allwinner/sun8i-v851s-lizard.dts
+--- a/arch/arm/boot/dts/allwinner/sun8i-v851s-lizard.dts	1969-12-31 19:00:00
++++ b/arch/arm/boot/dts/allwinner/sun8i-v851s-lizard.dts	2026-10-06 22:28:21
+@@ -0,0 +1,196 @@
++// SPDX-License-Identifier: (GPL-2.0-only OR MIT)
++// Copyright (C) 2024 Andras Szemzo.andras@gmail.com>
++
++/dts-v1/;
++#include <dt-bindings/gpio/gpio.h>
++#include <dt-bindings/leds/common.h>
++#include "sun8i-v853.dtsi"
++
++/ {
++	model = "Yuzuki-lizard";
++	compatible = "yuzukihd,lizard", "allwinner,sun8i-v853", "allwinner,sun8i";
++
++	aliases {
++		serial0 = &uart0;
++	};
++
++	chosen {
++		stdout-path = "serial0:115200n8";
++	};
++
++	memory {
++	    reg = <0x40000000 0x4000000>;
++	};
++
++	reg_vcc: vcc {
++		compatible = "regulator-fixed";
++		regulator-name = "vcc";
++		regulator-min-microvolt = <5000000>;
++		regulator-max-microvolt = <5000000>;
++	};
++
++	reg_vcc_1v8: vcc-1v8 {
++		compatible = "regulator-fixed";
++		regulator-name = "vcc-1v8";
++		regulator-min-microvolt = <1800000>;
++		regulator-max-microvolt = <1800000>;
++	};
++
++	reg_usbvbus: usbvbus {
++		compatible = "regulator-fixed";
++		regulator-name = "usbvbus";
++		regulator-min-microvolt = <5000000>;
++		regulator-max-microvolt = <5000000>;
++		vin-supply = <&reg_vcc>;
++	};
++
++	reg_vcc_3v3: vcc-3v3 {
++		compatible = "regulator-fixed";
++		regulator-name = "vcc-3v3";
++		regulator-min-microvolt = <3300000>;
++		regulator-max-microvolt = <3300000>;
++		vin-supply = <&reg_vcc>;
++	};
++
++	reg_vdd_cpu: vdd-cpu {
++		compatible = "regulator-fixed";
++		regulator-name = "vdd-cpu";
++		regulator-min-microvolt = <900000>;
++		regulator-max-microvolt = <900000>;
++		vin-supply = <&reg_vcc>;
++	};
++
++	leds {
++		compatible = "gpio-leds";
++
++		status_led {
++			linux,default-trigger = "heartbeat";
++			label = "led:red";
++			gpios = <&pio 5 6 GPIO_ACTIVE_HIGH>;
++		};
++	};
++
++	wifi_pwrseq: wifi-pwrseq {
++		compatible = "mmc-pwrseq-simple";
++		reset-gpios = <&pio 4 6 GPIO_ACTIVE_LOW>; /* PE6 */
++	};
++};
++
++&dcxo {
++	clock-frequency = <24000000>;
++};
++
++&cpu0 {
++	cpu-supply = <&reg_vdd_cpu>;
++};
++
++&pio {
++	vcc-pa-supply = <&reg_vcc_3v3>;
++	vcc-pc-supply = <&reg_vcc_3v3>;
++	vcc-pd-supply = <&reg_vcc_3v3>;
++	vcc-pe-supply = <&reg_vcc_3v3>;
++	vcc-pf-supply = <&reg_vcc_3v3>;
++	vcc-ph-supply = <&reg_vcc_3v3>;
++};
++
++&uart0 {
++	pinctrl-0 = <&uart0_ph9_pins>;
++	pinctrl-names = "default";
++	status = "okay";
++};
++
++&wdt {
++	status = "okay";
++};
++
++&spi0 {
++	pinctrl-0 = <&spi0_pins>;
++	pinctrl-names = "default";
++	status = "okay";
++
++	flash@0 {
++		compatible = "spi-nand";
++		spi-max-frequency = <75000000>;
++		reg = <0>;
++
++		partitions {
++			compatible = "fixed-partitions";
++			#address-cells = <1>;
++			#size-cells = <1>;
++
++			partition@0 {
++				label = "awboot";
++				reg = <0x00000000 0x00020000>;	/* 128K */
++			};
++
++			partition@20000 {
++				label = "dtb";
++				reg = <0x00020000 0x00020000>;  /* 128k */
++			};
++
++			partition@40000 {
++				label = "kernel";
++				reg = <0x00040000 0x00800000>;  /* 8MB */
++			};
++
++			partition@840000 {
++				label = "rootfs";
++				reg = <0x00840000 0x077c0000>;
++			};
++		};
++	};
++};
++
++&i2c2 {
++	pinctrl-0 = <&i2c2_ph11_pins>;
++	pinctrl-names = "default";
++	status = "okay";
++};
++
++&mmc0 {
++	bus-width = <4>;
++	broken-cd;
++	disable-wp;
++	vmmc-supply = <&reg_vcc_3v3>;
++	vqmmc-supply = <&reg_vcc_3v3>;
++	pinctrl-0 = <&mmc0_pins>;
++	pinctrl-names = "default";
++	status = "okay";
++};
++
++&mmc1 {
++	bus-width = <4>;
++	mmc-pwrseq = <&wifi_pwrseq>;
++	non-removable;
++	vmmc-supply = <&reg_vcc_3v3>;
++	vqmmc-supply = <&reg_vcc_3v3>;
++	pinctrl-0 = <&mmc1_pins>;
++	pinctrl-names = "default";
++	status = "okay";
++
++	xr829: wifi@1 {
++		reg = <1>;
++		interrupt-parent = <&pio>;
++		interrupts = <4 7 IRQ_TYPE_LEVEL_HIGH>; /* PE7 */
++		interrupt-names = "host-wake";
++	};
++};
++
++&usb_otg {
++	dr_mode = "otg";
++	status = "okay";
++};
++
++&ehci0 {
++	status = "okay";
++};
++
++&ohci0 {
++	status = "okay";
++};
++
++&usbphy {
++	usb0_vbus-supply = <&reg_usbvbus>;
++	usb0_id_det-gpio = <&pio 4 9 GPIO_ACTIVE_LOW>;
++	status = "okay";
++};
+diff -ruN a/arch/arm/boot/dts/allwinner/sun8i-v851s-u5a-wifi-64m.dts b/arch/arm/boot/dts/allwinner/sun8i-v851s-u5a-wifi-64m.dts
+--- a/arch/arm/boot/dts/allwinner/sun8i-v851s-u5a-wifi-64m.dts	1969-12-31 19:00:00
++++ b/arch/arm/boot/dts/allwinner/sun8i-v851s-u5a-wifi-64m.dts	2026-10-06 22:28:21
+@@ -0,0 +1,79 @@
++/dts-v1/;
++#include <dt-bindings/gpio/gpio.h>
++#include "sun8i-v853.dtsi"
++
++/ {
++    model = "U5A V851S RAM-only WiFi probe";
++    compatible = "catplay,u5a-v851s-wifi-probe", "allwinner,sun8i-v853";
++
++    /delete-node/ thermal-zones;
++
++    aliases {
++        serial0 = &uart0;
++    };
++
++    chosen {
++        bootargs = "rdinit=/init console=ttyGS0,115200 earlycon=uart8250,mmio32,0x02500000 loglevel=8 ignore_loglevel clk_ignore_unused panic=0";
++        linux,initrd-start = <0x43800000>;
++        linux,initrd-end = <0x43800000>;
++    };
++
++    memory@40000000 {
++        device_type = "memory";
++        reg = <0x40000000 0x04000000>;
++    };
++
++    wifi_pwrseq: wifi-pwrseq {
++        compatible = "mmc-pwrseq-simple";
++        reset-gpios = <&pio 4 8 GPIO_ACTIVE_LOW>;
++        clocks = <&ccu CLK_FANOUT0>;
++        clock-names = "ext_clock";
++        assigned-clocks = <&ccu CLK_FANOUT0>;
++        assigned-clock-parents = <&rtc CLK_OSC32K>;
++        post-power-on-delay-ms = <200>;
++    };
++};
++
++&cpu0 {
++    /delete-property/ operating-points-v2;
++};
++
++&mbus {
++    status = "disabled";
++};
++
++&mmc1 {
++    /delete-property/ mmc-ddr-1_8v;
++    bus-width = <4>;
++    max-frequency = <50000000>;
++    non-removable;
++    no-sd;
++    no-mmc;
++    cap-sdio-irq;
++    keep-power-in-suspend;
++    mmc-pwrseq = <&wifi_pwrseq>;
++    pinctrl-0 = <&mmc1_pins>;
++    pinctrl-names = "default";
++    status = "okay";
++};
++
++&usb_otg {
++    dr_mode = "peripheral";
++    status = "okay";
++};
++
++&usbphy {
++    status = "okay";
++};
++
++&ehci0 {
++    status = "disabled";
++};
++
++&ohci0 {
++    status = "disabled";
++};
++
++&dcxo {
++    clock-frequency = <24000000>;
++};
+diff -ruN a/arch/arm/boot/dts/allwinner/sun8i-v853.dtsi b/arch/arm/boot/dts/allwinner/sun8i-v853.dtsi
+--- a/arch/arm/boot/dts/allwinner/sun8i-v853.dtsi	1969-12-31 19:00:00
++++ b/arch/arm/boot/dts/allwinner/sun8i-v853.dtsi	2026-10-06 22:28:21
+@@ -0,0 +1,656 @@
++// SPDX-License-Identifier: (GPL-2.0-only OR MIT)
++// Copyright (C) 2024 Andras Szemzo <szemzo.andras@gmail.com>
++
++#include <dt-bindings/clock/sun6i-rtc.h>
++#include <dt-bindings/clock/allwinner,sun8i-v853-r-ccu.h>
++#include <dt-bindings/reset/allwinner,sun8i-v853-r-ccu.h>
++#include <dt-bindings/clock/allwinner,sun8i-v853-ccu.h>
++#include <dt-bindings/reset/allwinner,sun8i-v853-ccu.h>
++#include <dt-bindings/interrupt-controller/arm-gic.h>
++#include <dt-bindings/power/allwinner,sun8i-v853-ppu.h>
++
++/ {
++	#address-cells = <1>;
++	#size-cells = <1>;
++
++	dcxo: dcxo-clk {
++		compatible = "fixed-clock";
++		clock-output-names = "osc24M";
++		#clock-cells = <0>;
++	};
++
++	cpus {
++		#address-cells = <1>;
++		#size-cells = <0>;
++
++		cpu0: cpu@0 {
++			device_type = "cpu";
++			compatible = "arm,cortex-a7","arm,armv7";
++			reg = <0>;
++			clocks = <&ccu CLK_CPU>;
++			clock-names = "cpu";
++			clock-frequency = <912000000>;
++			clock-latency = <200000>;
++			cooling-min-level = <5>;
++			cooling-max-level = <0>;
++			#cooling-cells = <2>; /* min followed by max */
++			dynamic-power-coefficient = <142>;
++		};
++	};
++
++	pmu {
++		compatible = "arm,cortex-a7-pmu";
++		interrupts = <GIC_SPI 172 IRQ_TYPE_LEVEL_HIGH>,
++			     <GIC_SPI 173 IRQ_TYPE_LEVEL_HIGH>;
++		interrupt-parent = <&gic>;
++	};
++
++	timer {
++		compatible = "arm,armv7-timer";
++		interrupts = <GIC_PPI 13 (GIC_CPU_MASK_SIMPLE(2) | IRQ_TYPE_LEVEL_LOW)>,
++			     <GIC_PPI 14 (GIC_CPU_MASK_SIMPLE(2) | IRQ_TYPE_LEVEL_LOW)>,
++			     <GIC_PPI 11 (GIC_CPU_MASK_SIMPLE(2) | IRQ_TYPE_LEVEL_LOW)>,
++			     <GIC_PPI 10 (GIC_CPU_MASK_SIMPLE(2) | IRQ_TYPE_LEVEL_LOW)>;
++		clock-frequency = <24000000>;
++		interrupt-parent = <&gic>;
++		arm,cpu-registers-not-fw-configured;
++		arm,no-tick-in-suspend;
++	};
++
++	soc {
++		compatible = "simple-bus";
++		ranges;
++		interrupt-parent = <&gic>;
++		#address-cells = <1>;
++		#size-cells = <1>;
++		dma-noncoherent;
++
++		pio: pinctrl@2000000 {
++			compatible = "allwinner,sun8i-v853-pinctrl";
++			reg = <0x2000000 0x800>;
++			interrupts = <GIC_SPI 67 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 71 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 73 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 75 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 77 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 79 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 81 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 83 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&ccu CLK_APB0>, <&dcxo>, <&rtc CLK_OSC32K>;
++			clock-names = "apb", "hosc", "losc";
++			gpio-controller;
++			interrupt-controller;
++			#gpio-cells = <3>;
++			#interrupt-cells = <3>;
++
++			/omit-if-no-ref/
++			uart0_ph9_pins: uart0-ph9-pins {
++				pins = "PH9", "PH10";
++				function = "uart0";
++				allwinner,pinmux = <5>;
++			};
++
++			/omit-if-no-ref/
++			uart2_pe12_pins: uart2-pe12-pins {
++				pins = "PE12", "PE13";
++				function = "uart2";
++				allwinner,pinmux = <6>;
++			};
++
++			/omit-if-no-ref/
++			dsi_2lane_pins: dsi-2lane-pins {
++				pins = "PD1", "PD2", "PD3", "PD4", "PD5", "PD6";
++				function = "dsi";
++				allwinner,pinmux = <5>;
++			};
++
++			/omit-if-no-ref/
++			spi0_pins: spi0-pins {
++				pins = "PC0", "PC1", "PC2", "PC3", "PC4", "PC5";
++				function = "spi0";
++				allwinner,pinmux = <4>;
++			};
++
++			/omit-if-no-ref/
++			spi3_pins: spi3-pins {
++				pins = "PH11", "PH12", "PH13", "PH14";
++				function = "spi3";
++				allwinner,pinmux = <6>;
++			};
++
++			/omit-if-no-ref/
++			i2c2_ph11_pins: i2c2-ph11-pins {
++				pins = "PH11", "PH12";
++				function = "i2c2";
++				allwinner,pinmux = <5>;
++			};
++
++			/omit-if-no-ref/
++			i2c3_ph13_pins: i2c3-ph13-pins {
++				pins = "PH13", "PH14";
++				function = "i2c3";
++				allwinner,pinmux = <5>;
++			};
++
++			/omit-if-no-ref/
++			mmc0_pins: mmc0-pins {
++				pins = "PF0", "PF1", "PF2", "PF3", "PF4", "PF5";
++				function = "sdc0";
++				allwinner,pinmux = <2>;
++				drive-strength = <30>;
++				bias-pull-up;
++			};
++
++			/omit-if-no-ref/
++			mmc1_pins: mmc1-pins {
++				pins = "PE0", "PE1", "PE2", "PE3", "PE4", "PE5";
++				function = "sdc1";
++				allwinner,pinmux = <6>;
++				drive-strength = <30>;
++				bias-pull-up;
++			};
++
++			/omit-if-no-ref/
++			rmii_pe_pins: rmii-pe-pins {
++				pins = "PE0", "PE1", "PE2", "PE3", "PE4",
++				       "PE5", "PE6", "PE7", "PE8", "PE9";
++				function = "emac";
++				allwinner,pinmux = <3>;
++			};
++		};
++
++		ccu: clock-controller@2001000 {
++			compatible = "allwinner,sun8i-v853-ccu";
++			reg = <0x2001000 0x1000>;
++			clocks = <&dcxo>,
++				 <&rtc CLK_IOSC>,
++				 <&rtc CLK_OSC32K>;
++			clock-names = "hosc", "iosc", "losc";
++			#clock-cells = <1>;
++			#reset-cells = <1>;
++		};
++
++		gpadc: adc@2009000 {
++			compatible = "allwinner,sun20i-d1-gpadc";
++			reg = <0x2009000 0x0400>;
++			clocks = <&ccu CLK_BUS_GPADC>;
++			resets = <&ccu RST_BUS_GPADC>;
++			interrupts = <GIC_SPI 57 IRQ_TYPE_LEVEL_HIGH>;
++			status = "disabled";
++			#io-channel-cells = <1>;
++		};
++
++		i2s0: i2s@2032000 {
++			compatible = "allwinner,sun50i-r329-i2s";
++			reg = <0x2032000 0x1000>;
++			interrupts = <GIC_SPI 26 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&ccu CLK_BUS_I2S0>,
++				 <&ccu CLK_I2S0>;
++			clock-names = "apb", "mod";
++			resets = <&ccu RST_BUS_I2S0>;
++			dmas = <&dma 3>, <&dma 3>;
++			dma-names = "rx", "tx";
++			status = "disabled";
++			#sound-dai-cells = <0>;
++		};
++
++		i2s1: i2s@2033000 {
++			compatible = "allwinner,sun50i-r329-i2s";
++			reg = <0x2033000 0x1000>;
++			interrupts = <GIC_SPI 27 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&ccu CLK_BUS_I2S1>,
++				 <&ccu CLK_I2S1>;
++			clock-names = "apb", "mod";
++			resets = <&ccu RST_BUS_I2S1>;
++			dmas = <&dma 4>, <&dma 4>;
++			dma-names = "rx", "tx";
++			status = "disabled";
++			#sound-dai-cells = <0>;
++		};
++
++		timer: timer@2050000 {
++			compatible = "allwinner,sun20i-d1-timer",
++				     "allwinner,sun8i-a23-timer";
++			reg = <0x2050000 0xa0>;
++			interrupts = <GIC_SPI 59 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 60 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&dcxo>;
++		};
++
++		wdt: watchdog@20500a0 {
++			compatible = "allwinner,sun20i-d1-wdt-reset",
++				     "allwinner,sun20i-d1-wdt";
++			reg = <0x20500a0 0x20>;
++			interrupts = <GIC_SPI 63 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&dcxo>, <&rtc CLK_OSC32K>;
++			clock-names = "hosc", "losc";
++			status = "reserved";
++		};
++
++		uart0: serial@2500000 {
++			compatible = "snps,dw-apb-uart";
++			reg = <0x2500000 0x400>;
++			reg-io-width = <4>;
++			reg-shift = <2>;
++			interrupts = <GIC_SPI 2 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&ccu CLK_BUS_UART0>;
++			resets = <&ccu RST_BUS_UART0>;
++			dmas = <&dma 14>, <&dma 14>;
++			dma-names = "rx", "tx";
++			status = "disabled";
++		};
++
++		uart1: serial@2500400 {
++			compatible = "snps,dw-apb-uart";
++			reg = <0x2500400 0x400>;
++			reg-io-width = <4>;
++			reg-shift = <2>;
++			interrupts = <GIC_SPI 3 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&ccu CLK_BUS_UART1>;
++			resets = <&ccu RST_BUS_UART1>;
++			dmas = <&dma 15>, <&dma 15>;
++			dma-names = "rx", "tx";
++			status = "disabled";
++		};
++
++		uart2: serial@2500800 {
++			compatible = "snps,dw-apb-uart";
++			reg = <0x2500800 0x400>;
++			reg-io-width = <4>;
++			reg-shift = <2>;
++			interrupts = <GIC_SPI 4 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&ccu CLK_BUS_UART2>;
++			resets = <&ccu RST_BUS_UART2>;
++			dmas = <&dma 16>, <&dma 16>;
++			dma-names = "rx", "tx";
++			status = "disabled";
++		};
++
++		uart3: serial@2500c00 {
++			compatible = "snps,dw-apb-uart";
++			reg = <0x2500c00 0x400>;
++			reg-io-width = <4>;
++			reg-shift = <2>;
++			interrupts = <GIC_SPI 5 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&ccu CLK_BUS_UART3>;
++			resets = <&ccu RST_BUS_UART3>;
++			dmas = <&dma 17>, <&dma 17>;
++			dma-names = "rx", "tx";
++			status = "disabled";
++		};
++
++		i2c0: i2c@2502000 {
++			compatible = "allwinner,sun8i-v536-i2c",
++				     "allwinner,sun6i-a31-i2c";
++			reg = <0x2502000 0x400>;
++			interrupts = <GIC_SPI 9 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&ccu CLK_BUS_I2C0>;
++			resets = <&ccu RST_BUS_I2C0>;
++			dmas = <&dma 43>, <&dma 43>;
++			dma-names = "rx", "tx";
++			status = "disabled";
++			#address-cells = <1>;
++			#size-cells = <0>;
++		};
++
++		i2c1: i2c@2502400 {
++			compatible = "allwinner,sun8i-v536-i2c",
++				     "allwinner,sun6i-a31-i2c";
++			reg = <0x2502400 0x400>;
++			interrupts = <GIC_SPI 10 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&ccu CLK_BUS_I2C1>;
++			resets = <&ccu RST_BUS_I2C1>;
++			dmas = <&dma 44>, <&dma 44>;
++			dma-names = "rx", "tx";
++			status = "disabled";
++			#address-cells = <1>;
++			#size-cells = <0>;
++		};
++
++		i2c2: i2c@2502800 {
++			compatible = "allwinner,sun8i-v536-i2c",
++				     "allwinner,sun6i-a31-i2c";
++			reg = <0x2502800 0x400>;
++			interrupts = <GIC_SPI 11 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&ccu CLK_BUS_I2C2>;
++			resets = <&ccu RST_BUS_I2C2>;
++			dmas = <&dma 45>, <&dma 45>;
++			dma-names = "rx", "tx";
++			status = "disabled";
++			#address-cells = <1>;
++			#size-cells = <0>;
++		};
++
++		i2c3: i2c@2502c00 {
++			compatible = "allwinner,sun8i-v536-i2c",
++				     "allwinner,sun6i-a31-i2c";
++			reg = <0x2502c00 0x400>;
++			interrupts = <GIC_SPI 12 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&ccu CLK_BUS_I2C3>;
++			resets = <&ccu RST_BUS_I2C3>;
++			dmas = <&dma 46>, <&dma 46>;
++			dma-names = "rx", "tx";
++			status = "disabled";
++			#address-cells = <1>;
++			#size-cells = <0>;
++		};
++
++		i2c4: i2c@2503000 {
++			compatible = "allwinner,sun8i-v536-i2c",
++				     "allwinner,sun6i-a31-i2c";
++			reg = <0x2503000 0x400>;
++			interrupts = <GIC_SPI 13 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&ccu CLK_BUS_I2C4>;
++			resets = <&ccu RST_BUS_I2C4>;
++			dmas = <&dma 47>, <&dma 47>;
++			dma-names = "rx", "tx";
++			status = "disabled";
++			#address-cells = <1>;
++			#size-cells = <0>;
++		};
++
++		syscon: syscon@3000000 {
++			compatible = "allwinner,sun8i-h3-system-control";
++			reg = <0x3000000 0x1000>;
++			ranges;
++			#address-cells = <1>;
++			#size-cells = <1>;
++
++			sram_c: sram@20000 {
++				compatible = "mmio-sram";
++				reg = <0x00020000 0x21000>;
++				#address-cells = <1>;
++				#size-cells = <1>;
++				ranges = <0 0x00020000 0x21000>;
++
++				ve_sram: sram-section@0 {
++				    compatible = "allwinner,sun8i-v3s-sram-c", 
++						 "allwinner,sun4i-a10-sram-c1";
++				    reg = <0x000000 0x21000>;
++				};
++			};
++		};
++
++		dma: dma-controller@3002000 {
++			compatible = "allwinner,sun20i-d1-dma";
++			reg = <0x3002000 0x1000>;
++			interrupts = <GIC_SPI 50 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&ccu CLK_BUS_DMA>, <&ccu CLK_MBUS_DMA>;
++			clock-names = "bus", "mbus";
++			resets = <&ccu RST_BUS_DMA>;
++			dma-channels = <16>;
++			dma-requests = <48>;
++			#dma-cells = <1>;
++		};
++
++		hwspinlock: hwlock@3005000 {
++		    compatible = "allwinner,sun6i-a31-hwspinlock";
++			reg = <0x3005000 0x1000>;
++			clocks = <&ccu CLK_BUS_SPINLOCK>;
++			clock-names = "ahb";
++			resets = <&ccu RST_BUS_SPINLOCK>;
++			reset-names = "ahb";
++			interrupts = <GIC_SPI 54 IRQ_TYPE_LEVEL_HIGH>;
++		};
++
++		sid: efuse@3006000 {
++			compatible = "allwinner,sun20i-d1-sid";
++			reg = <0x3006000 0x1000>;
++			#address-cells = <1>;
++			#size-cells = <1>;
++
++			ths_calib: ths-calib@14 {
++				reg = <0x14 0x8>;
++			};
++		};
++
++		hstimer@3008000 {
++			compatible = "allwinner,sun7i-a20-hstimer";
++			reg = <0x03008000 0x1000>;
++			interrupts = <GIC_SPI 55 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 56 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&ccu CLK_BUS_HSTIMER>;
++		};
++
++		gic: interrupt-controller@3021000 {
++			compatible = "arm,gic-400";
++			reg = <0x03021000 0x1000>,	/* GIC Dist */
++			      <0x03022000 0x2000>,	/* GIC CPU */
++			      <0x03024000 0x2000>,	/* GIC VCPU Control */
++			      <0x03026000 0x2000>;	/* GIC VCPU */
++			interrupts = <GIC_PPI 9 (GIC_CPU_MASK_SIMPLE(2) | IRQ_TYPE_LEVEL_HIGH)>;
++			interrupt-controller;
++			#interrupt-cells = <3>;
++		};
++
++		mbus: dram-controller@3102000 {
++			compatible = "allwinner,sun20i-d1-mbus";
++			reg = <0x3102000 0x1000>,
++			      <0x3103000 0x1000>;
++			reg-names = "mbus", "dram";
++			interrupts = <GIC_SPI 43 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&ccu CLK_MBUS>,
++				 <&ccu CLK_DRAM>,
++				 <&ccu CLK_BUS_DRAM>;
++			clock-names = "mbus", "dram", "bus";
++			dma-ranges = <0 0x40000000 0x80000000>;
++			#address-cells = <1>;
++			#size-cells = <1>;
++			#interconnect-cells = <1>;
++		};
++
++		mmc0: mmc@4020000 {
++			compatible = "allwinner,sun20i-d1-mmc";
++			reg = <0x4020000 0x1000>;
++			interrupts = <GIC_SPI 40 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&ccu CLK_BUS_MMC0>, <&ccu CLK_MMC0>;
++			clock-names = "ahb", "mmc";
++			resets = <&ccu RST_BUS_MMC0>;
++			reset-names = "ahb";
++			no-sdio;
++			no-mmc;
++			cap-sd-highspeed;
++			max-frequency = <150000000>;
++			mmc-ddr-1_8v;
++			status = "disabled";
++			#address-cells = <1>;
++			#size-cells = <0>;
++		};
++
++		mmc1: mmc@4021000 {
++			compatible = "allwinner,sun20i-d1-mmc";
++			reg = <0x4021000 0x1000>;
++			interrupts = <GIC_SPI 41 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&ccu CLK_BUS_MMC1>, <&ccu CLK_MMC1>;
++			clock-names = "ahb", "mmc";
++			resets = <&ccu RST_BUS_MMC1>;
++			reset-names = "ahb";
++			cap-sd-highspeed;
++			cap-mmc-highspeed;
++			max-frequency = <150000000>;
++			mmc-ddr-1_8v;
++			status = "disabled";
++			#address-cells = <1>;
++			#size-cells = <0>;
++		};
++
++		mmc2: mmc@4022000 {
++			compatible = "allwinner,sun20i-d1-mmc";
++			reg = <0x4022000 0x1000>;
++			interrupts = <GIC_SPI 42 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&ccu CLK_BUS_MMC2>, <&ccu CLK_MMC2>;
++			clock-names = "ahb", "mmc";
++			resets = <&ccu RST_BUS_MMC2>;
++			reset-names = "ahb";
++			no-sdio;
++			no-sd;
++			cap-mmc-highspeed;
++			max-frequency = <150000000>;
++			mmc-ddr-1_8v;
++			mmc-ddr-3_3v;
++			status = "disabled";
++			#address-cells = <1>;
++			#size-cells = <0>;
++		};
++
++		spi0: spi@4025000 {
++			compatible = "allwinner,sun50i-r329-spi";
++			reg = <0x4025000 0x1000>;
++			interrupts = <GIC_SPI 15 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&ccu CLK_BUS_SPI0>, <&ccu CLK_SPI0>;
++			clock-names = "ahb", "mod";
++			resets = <&ccu RST_BUS_SPI0>;
++			dmas = <&dma 22>, <&dma 22>;
++			dma-names = "rx", "tx";
++			num-cs = <1>;
++			status = "disabled";
++			#address-cells = <1>;
++			#size-cells = <0>;
++		};
++
++		spi1: spi@4026000 {
++			compatible = "allwinner,sun50i-r329-spi-dbi",
++				     "allwinner,sun50i-r329-spi";
++			reg = <0x4026000 0x1000>;
++			interrupts = <GIC_SPI 16 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&ccu CLK_BUS_SPI1>, <&ccu CLK_SPI1>;
++			clock-names = "ahb", "mod";
++			resets = <&ccu RST_BUS_SPI1>;
++			dmas = <&dma 23>, <&dma 23>;
++			dma-names = "rx", "tx";
++			num-cs = <1>;
++			status = "disabled";
++			#address-cells = <1>;
++			#size-cells = <0>;
++		};
++
++		spi2: spi@4027000 {
++			compatible = "allwinner,sun50i-r329-spi";
++			reg = <0x4027000 0x1000>;
++			interrupts = <GIC_SPI 17 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&ccu CLK_BUS_SPI2>, <&ccu CLK_SPI2>;
++			clock-names = "ahb", "mod";
++			resets = <&ccu RST_BUS_SPI2>;
++			dmas = <&dma 24>, <&dma 24>;
++			dma-names = "rx", "tx";
++			num-cs = <1>;
++			status = "disabled";
++			#address-cells = <1>;
++			#size-cells = <0>;
++		};
++
++		spi3: spi@4028000 {
++			compatible = "allwinner,sun50i-r329-spi";
++			reg = <0x4028000 0x1000>;
++			interrupts = <GIC_SPI 21 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&ccu CLK_BUS_SPI3>, <&ccu CLK_SPI3>;
++			clock-names = "ahb", "mod";
++			resets = <&ccu RST_BUS_SPI3>;
++			dmas = <&dma 25>, <&dma 25>;
++			dma-names = "rx", "tx";
++			num-cs = <1>;
++			status = "disabled";
++			#address-cells = <1>;
++			#size-cells = <0>;
++		};
++
++		usb_otg: usb@4100000 {
++			compatible = "allwinner,sun8i-a33-musb";
++			reg = <0x4100000 0x400>;
++			interrupts = <GIC_SPI 29 IRQ_TYPE_LEVEL_HIGH>;
++			interrupt-names = "mc";
++			clocks = <&ccu CLK_BUS_OTG>;
++			resets = <&ccu RST_BUS_OTG>;
++			extcon = <&usbphy 0>;
++			phys = <&usbphy 0>;
++			phy-names = "usb";
++			status = "disabled";
++		};
++
++		usbphy: phy@4100400 {
++			compatible = "allwinner,sun8i-v853-usb-phy";
++			reg = <0x4100400 0x100>,
++			      <0x4101800 0x100>;
++			reg-names = "phy_ctrl",
++				    "pmu0";
++			clocks = <&ccu CLK_USB_OHCI>;
++			clock-names = "usb0_phy";
++			resets = <&ccu RST_USB_PHY>;
++			reset-names = "usb0_reset";
++			status = "disabled";
++			#phy-cells = <1>;
++		};
++
++		ehci0: usb@4101000 {
++			compatible = "generic-ehci";
++			reg = <0x4101000 0x100>;
++			interrupts = <GIC_SPI 30 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&ccu CLK_BUS_OHCI>,
++				 <&ccu CLK_BUS_EHCI>,
++				 <&ccu CLK_USB_OHCI>;
++			resets = <&ccu RST_BUS_OHCI>,
++				 <&ccu RST_BUS_EHCI>;
++			phys = <&usbphy 0>;
++			phy-names = "usb";
++			status = "disabled";
++		};
++
++		ohci0: usb@4101400 {
++			compatible = "generic-ohci";
++			reg = <0x4101400 0x100>;
++			interrupts = <GIC_SPI 31 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&ccu CLK_BUS_OHCI>,
++				 <&ccu CLK_USB_OHCI>;
++			resets = <&ccu RST_BUS_OHCI>;
++			phys = <&usbphy 0>;
++			phy-names = "usb";
++			status = "disabled";
++		};
++
++		ppu: power-controller@7001000 {
++			compatible = "allwinner,sun8i-v853-ppu";
++			reg = <0x7001000 0x400>;
++			clocks = <&r_ccu CLK_BUS_R_PPU>;
++			resets = <&r_ccu RST_BUS_R_PPU>;
++			#power-domain-cells = <1>;
++		};
++
++		r_ccu: clock-controller@7010000 {
++			compatible = "allwinner,sun8i-v853-r-ccu";
++			reg = <0x7010000 0x230>;
++			clocks = <&dcxo>,
++				 <&rtc CLK_IOSC>,
++				 <&rtc CLK_OSC32K>,
++				 <&ccu CLK_PLL_PERIPH_200M>,
++				 <&ccu CLK_PLL_AUDIO_4X>;
++			clock-names = "hosc",
++				      "iosc",
++				      "losc",
++				      "pll-periph",
++				      "pll-audio";
++			#clock-cells = <1>;
++			#reset-cells = <1>;
++		};
++
++		nmi_intc: intc-nmi@7010320 {
++			compatible = "allwinner,sun9i-a80-nmi";
++			interrupt-parent = <&gic>;
++			#interrupt-cells = <2>;
++			#address-cells = <0>;
++			interrupt-controller;
++			reg = <0x07010320 0xc>;
++			interrupts = <GIC_SPI 136 IRQ_TYPE_LEVEL_HIGH>;
++		};
++
++		rtc: rtc@7090000 {
++			compatible = "allwinner,sun50i-r329-rtc";
++			reg = <0x7090000 0x400>;
++			interrupts = <GIC_SPI 138 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&r_ccu CLK_BUS_R_RTC>;
++			clock-names = "bus";
++			resets = <&r_ccu RST_BUS_R_RTC>;
++			wakeup-source;
++			#clock-cells = <1>;
++		};
++	};
++};
+diff -ruN a/arch/arm/mach-sunxi/sunxi.c b/arch/arm/mach-sunxi/sunxi.c
+--- a/arch/arm/mach-sunxi/sunxi.c	2026-10-06 22:28:21
++++ b/arch/arm/mach-sunxi/sunxi.c	2026-10-06 22:28:21
+@@ -66,6 +66,7 @@
+ 	"allwinner,sun8i-r40",
+ 	"allwinner,sun8i-v3",
+ 	"allwinner,sun8i-v3s",
++	"allwinner,sun8i-v853",
+ 	NULL,
+ };
+ 
+diff -ruN a/drivers/clk/sunxi-ng/Kconfig b/drivers/clk/sunxi-ng/Kconfig
+--- a/drivers/clk/sunxi-ng/Kconfig	2026-10-06 22:28:21
++++ b/drivers/clk/sunxi-ng/Kconfig	2026-10-06 22:28:21
+@@ -12,6 +12,16 @@
+ 	default ARCH_SUNXI
+ 	depends on MACH_SUNIV || COMPILE_TEST
+ 
++config SUN8I_V853_CCU
++	tristate "Support for the Allwinner V853/V851s/V851SE CCU"
++	default MACH_SUN8I
++	depends on MACH_SUN8I || COMPILE_TEST
++
++config SUN8I_V853_R_CCU
++	tristate "Support for the Allwinner V853/V851s/V851SE PRCM CCU"
++	default MACH_SUN8I
++	depends on MACH_SUN8I || COMPILE_TEST
++
+ config SUN20I_D1_CCU
+ 	tristate "Support for the Allwinner D1/R528/T113 CCU"
+ 	default ARCH_SUNXI
+diff -ruN a/drivers/clk/sunxi-ng/Makefile b/drivers/clk/sunxi-ng/Makefile
+--- a/drivers/clk/sunxi-ng/Makefile	2026-10-06 22:28:21
++++ b/drivers/clk/sunxi-ng/Makefile	2026-10-06 22:28:21
+@@ -25,6 +25,8 @@
+ 
+ # SoC support
+ obj-$(CONFIG_SUNIV_F1C100S_CCU)	+= suniv-f1c100s-ccu.o
++obj-$(CONFIG_SUN8I_V853_CCU)	+= sun8i-v853-ccu.o
++obj-$(CONFIG_SUN8I_V853_R_CCU)	+= sun8i-v853-r-ccu.o
+ obj-$(CONFIG_SUN20I_D1_CCU)	+= sun20i-d1-ccu.o
+ obj-$(CONFIG_SUN20I_D1_R_CCU)	+= sun20i-d1-r-ccu.o
+ obj-$(CONFIG_SUN50I_A64_CCU)	+= sun50i-a64-ccu.o
+@@ -53,6 +55,8 @@
+ obj-$(CONFIG_SUN9I_A80_CCU)	+= sun9i-a80-usb-ccu.o
+ 
+ suniv-f1c100s-ccu-y		+= ccu-suniv-f1c100s.o
++sun8i-v853-ccu-y		+= ccu-sun8i-v853.o
++sun8i-v853-r-ccu-y		+= ccu-sun8i-v853-r.o
+ sun20i-d1-ccu-y			+= ccu-sun20i-d1.o
+ sun20i-d1-r-ccu-y		+= ccu-sun20i-d1-r.o
+ sun50i-a64-ccu-y		+= ccu-sun50i-a64.o
+diff -ruN a/drivers/clk/sunxi-ng/ccu-sun8i-v853-r.c b/drivers/clk/sunxi-ng/ccu-sun8i-v853-r.c
+--- a/drivers/clk/sunxi-ng/ccu-sun8i-v853-r.c	1969-12-31 19:00:00
++++ b/drivers/clk/sunxi-ng/ccu-sun8i-v853-r.c	2026-10-06 22:28:21
+@@ -0,0 +1,120 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Copyright (C) 2025 Andras Szemzo <szemzo.andras@gmail.com>
++ *
++ * Based on ccu-sun20i-d1-r.c by Samuel Holland.
++ */
++
++#include <linux/clk-provider.h>
++#include <linux/module.h>
++#include <linux/platform_device.h>
++
++#include "ccu_common.h"
++#include "ccu_reset.h"
++
++#include "ccu_gate.h"
++#include "ccu_mp.h"
++
++#include "ccu-sun8i-v853-r.h"
++
++static const struct clk_parent_data r_ahb_apb0_parents[] = {
++	{ .fw_name = "hosc" },
++	{ .fw_name = "losc" },
++	{ .fw_name = "iosc" },
++	{ .fw_name = "pll-periph" },
++	{ .fw_name = "pll-audio" }
++};
++
++static SUNXI_CCU_MP_DATA_WITH_MUX(r_ahb_clk, "r-ahb",
++				  r_ahb_apb0_parents, 0x000,
++				  0, 5,		/* M */
++				  8, 2,		/* P */
++				  24, 3,	/* mux */
++				  0);
++static const struct clk_hw *r_ahb_hw = &r_ahb_clk.common.hw;
++
++static SUNXI_CCU_MP_DATA_WITH_MUX(r_apb0_clk, "r-apb0",
++				  r_ahb_apb0_parents, 0x00c,
++				  0, 5,		/* M */
++				  8, 2,		/* P */
++				  24, 3,	/* mux */
++				  0);
++static const struct clk_hw *r_apb0_hw = &r_apb0_clk.common.hw;
++
++static SUNXI_CCU_GATE_HWS(bus_r_twd_clk, "bus-r-twd", &r_apb0_hw, 
++			  0x12c, BIT(0), 0);
++static SUNXI_CCU_GATE_HWS(bus_r_ppu_clk, "bus-r-ppu", &r_apb0_hw,
++			  0x1ac, BIT(0), 0);
++static SUNXI_CCU_GATE_HWS(bus_r_rtc_clk, "bus-r-rtc", &r_ahb_hw,
++			  0x20c, BIT(0), 0);
++static SUNXI_CCU_GATE_HWS(bus_r_cpucfg_clk, "bus-r-cpucfg", &r_apb0_hw,
++			  0x22c, BIT(0), 0);
++
++static struct ccu_common *sun8i_v853_r_ccu_clks[] = {
++	&r_ahb_clk.common,
++	&r_apb0_clk.common,
++	&bus_r_twd_clk.common,
++	&bus_r_ppu_clk.common,
++	&bus_r_rtc_clk.common,
++	&bus_r_cpucfg_clk.common,
++};
++
++static struct clk_hw_onecell_data sun8i_v853_r_hw_clks = {
++	.num	= CLK_NUMBER,
++	.hws	= {
++		[CLK_R_AHB]		= &r_ahb_clk.common.hw,
++		[CLK_R_APB0]		= &r_apb0_clk.common.hw,
++		[CLK_BUS_R_TWD]		= &bus_r_twd_clk.common.hw,
++		[CLK_BUS_R_PPU]		= &bus_r_ppu_clk.common.hw,
++		[CLK_BUS_R_RTC]		= &bus_r_rtc_clk.common.hw,
++		[CLK_BUS_R_CPUCFG]	= &bus_r_cpucfg_clk.common.hw,
++	},
++};
++
++static const struct ccu_reset_map sun8i_v853_r_ccu_resets[] = {
++	[RST_BUS_R_TWD]		= { 0x12c, BIT(16) },
++	[RST_BUS_R_PPU]		= { 0x1ac, BIT(16) },
++	[RST_BUS_R_RTC]		= { 0x20c, BIT(16) },
++	[RST_BUS_R_CPUCFG]	= { 0x22c, BIT(16) },
++};
++
++static const struct sunxi_ccu_desc sun8i_v853_r_ccu_desc = {
++	.ccu_clks	= sun8i_v853_r_ccu_clks,
++	.num_ccu_clks	= ARRAY_SIZE(sun8i_v853_r_ccu_clks),
++
++	.hw_clks	= &sun8i_v853_r_hw_clks,
++
++	.resets		= sun8i_v853_r_ccu_resets,
++	.num_resets	= ARRAY_SIZE(sun8i_v853_r_ccu_resets),
++};
++
++static int sun8i_v853_r_ccu_probe(struct platform_device *pdev)
++{
++	void __iomem *reg;
++
++	reg = devm_platform_ioremap_resource(pdev, 0);
++	if (IS_ERR(reg))
++		return PTR_ERR(reg);
++
++	return devm_sunxi_ccu_probe(&pdev->dev, reg, &sun8i_v853_r_ccu_desc);
++}
++
++static const struct of_device_id sun8i_v853_r_ccu_ids[] = {
++	{ .compatible = "allwinner,sun8i-v853-r-ccu" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, sun8i_v853_r_ccu_ids);
++
++static struct platform_driver sun8i_v853_r_ccu_driver = {
++	.probe	= sun8i_v853_r_ccu_probe,
++	.driver	= {
++		.name			= "sun8i-v853-r-ccu",
++		.suppress_bind_attrs	= true,
++		.of_match_table		= sun8i_v853_r_ccu_ids,
++	},
++};
++module_platform_driver(sun8i_v853_r_ccu_driver);
++
++MODULE_IMPORT_NS("SUNXI_CCU");
++MODULE_DESCRIPTION("Support for the Allwinner V853 PRCM CCU");
++MODULE_LICENSE("GPL");
+diff -ruN a/drivers/clk/sunxi-ng/ccu-sun8i-v853-r.h b/drivers/clk/sunxi-ng/ccu-sun8i-v853-r.h
+--- a/drivers/clk/sunxi-ng/ccu-sun8i-v853-r.h	1969-12-31 19:00:00
++++ b/drivers/clk/sunxi-ng/ccu-sun8i-v853-r.h	2026-10-06 22:28:21
+@@ -0,0 +1,14 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/*
++ * Copyright (C) 2025 Andras Szemzo <szemzo.andras@gmail.com>
++ */
++
++#ifndef _CCU_SUN8I_V853_R_H
++#define _CCU_SUN8I_V853_R_H
++
++#include <dt-bindings/clock/allwinner,sun8i-v853-r-ccu.h>
++#include <dt-bindings/reset/allwinner,sun8i-v853-r-ccu.h>
++
++#define CLK_NUMBER		(CLK_BUS_R_CPUCFG + 1)
++
++#endif
+diff -ruN a/drivers/clk/sunxi-ng/ccu-sun8i-v853.c b/drivers/clk/sunxi-ng/ccu-sun8i-v853.c
+--- a/drivers/clk/sunxi-ng/ccu-sun8i-v853.c	1969-12-31 19:00:00
++++ b/drivers/clk/sunxi-ng/ccu-sun8i-v853.c	2026-10-06 22:28:21
+@@ -0,0 +1,1145 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Copyright (C) 2025 Andras Szemzo <szemzo.andras@gmail.com>
++ *
++ * Based on ccu-sun20i-d1.c by Samuel Holland.
++ */
++
++#include <linux/clk-provider.h>
++#include <linux/io.h>
++#include <linux/module.h>
++#include <linux/platform_device.h>
++
++#include "../clk.h"
++
++#include "ccu_common.h"
++#include "ccu_reset.h"
++
++#include "ccu_div.h"
++#include "ccu_gate.h"
++#include "ccu_mp.h"
++#include "ccu_mult.h"
++#include "ccu_nk.h"
++#include "ccu_nkm.h"
++#include "ccu_nkmp.h"
++#include "ccu_nm.h"
++
++#include "ccu-sun8i-v853.h"
++
++static const struct clk_parent_data osc24M[] = {
++	{ .fw_name = "hosc" }
++};
++
++/*
++ * For the CPU PLL, the output divider is described as "only for testing"
++ * in the user manual. So it's not modelled and forced to 0.
++ */
++#define SUN8I_V853_PLL_CPU_REG		0x000
++
++static struct ccu_mult pll_cpu_clk = {
++	.enable		= BIT(27),
++	.lock		= BIT(28),
++	.mult		= _SUNXI_CCU_MULT_MIN(8, 8, 11),
++	.common		= {
++		.reg		= 0x000,
++		.hw.init	= CLK_HW_INIT_PARENTS_DATA("pll-cpu", osc24M,
++							   &ccu_mult_ops,
++							   CLK_SET_RATE_GATE),
++	},
++};
++
++/* Some PLLs are input * N / div1 / P. Model them as NKMP with no K */
++#define SUN8I_V853_PLL_DDR_REG		0x010
++static struct ccu_nkmp pll_ddr_clk = {
++	.enable		= BIT(27),
++	.lock		= BIT(28),
++	.n		= _SUNXI_CCU_MULT_MIN(8, 8, 11),
++	.m		= _SUNXI_CCU_DIV(1, 1), /* input divider */
++	.p		= _SUNXI_CCU_DIV(0, 1), /* output divider */
++	.common		= {
++		.reg		= 0x010,
++		.hw.init	= CLK_HW_INIT_PARENTS_DATA("pll-ddr", osc24M,
++							   &ccu_nkmp_ops,
++							   CLK_SET_RATE_GATE),
++	},
++};
++
++#define SUN8I_V853_PLL_PERIPH_REG	0x020
++static struct ccu_nm pll_periph_4x_clk = {
++	.enable		= BIT(27),
++	.lock		= BIT(28),
++	.n		= _SUNXI_CCU_MULT_MIN(8, 8, 11),
++	.m		= _SUNXI_CCU_DIV(1, 1), /* input divider */
++	.common		= {
++		.reg		= 0x020,
++		.hw.init	= CLK_HW_INIT_PARENTS_DATA("pll-periph-4x", osc24M,
++							   &ccu_nm_ops,
++							   CLK_SET_RATE_GATE),
++	},
++};
++
++static const struct clk_hw *pll_periph_4x_hws[] = {
++	&pll_periph_4x_clk.common.hw
++};
++
++static SUNXI_CCU_M_HWS(pll_periph_2x_clk, "pll-periph-2x", pll_periph_4x_hws,
++		       0x020, 16, 3, 0);
++
++static SUNXI_CCU_M_HWS(pll_periph_800M_clk, "pll-periph-800M", pll_periph_4x_hws,
++		       0x020, 20, 3, 0);
++
++static SUNXI_CCU_M_HWS(pll_periph_480M_clk, "pll-periph-480M", pll_periph_4x_hws,
++		       0x020, 2, 3, 0);
++
++static CLK_FIXED_FACTOR_HW(pll_periph_600M_clk, "pll-periph-600M",
++			   &pll_periph_2x_clk.common.hw, 2, 1, 0);
++
++static CLK_FIXED_FACTOR_HW(pll_periph_400M_clk, "pll-periph-400M",
++			   &pll_periph_2x_clk.common.hw, 3, 1, 0);
++
++static CLK_FIXED_FACTOR_HW(pll_periph_300M_clk, "pll-periph-300M",
++			   &pll_periph_600M_clk.hw, 2, 1, 0);
++
++static CLK_FIXED_FACTOR_HW(pll_periph_200M_clk, "pll-periph-200M",
++			   &pll_periph_400M_clk.hw, 2, 1, 0);
++
++static CLK_FIXED_FACTOR_HW(pll_periph_160M_clk, "pll-periph-160M",
++			   &pll_periph_480M_clk.common.hw, 3, 1, 0);
++
++static CLK_FIXED_FACTOR_HW(pll_periph_150M_clk, "pll-periph-150M",
++			   &pll_periph_300M_clk.hw, 2, 1, 0);
++
++/*
++ * For Video PLLs, the output divider is described as "only for testing"
++ * in the user manual.
++ */
++#define SUN8I_V853_PLL_VIDEO_REG	0x040
++static struct ccu_nkmp pll_video_4x_clk = {
++	.enable		= BIT(27),
++	.lock		= BIT(28),
++	.n		= _SUNXI_CCU_MULT_MIN(8, 8, 11),
++	.p		= _SUNXI_CCU_DIV(1, 1), /* input divider */
++	.common		= {
++		.reg		= 0x040,
++		.hw.init	= CLK_HW_INIT_PARENTS_DATA("pll-video-4x", osc24M,
++							   &ccu_nkmp_ops,
++							   CLK_SET_RATE_GATE),
++	},
++};
++
++static const struct clk_hw *pll_video_4x_hws[] = {
++	&pll_video_4x_clk.common.hw
++};
++static CLK_FIXED_FACTOR_HWS(pll_video_2x_clk, "pll-video-2x",
++			    pll_video_4x_hws, 2, 1, CLK_SET_RATE_PARENT);
++static CLK_FIXED_FACTOR_HWS(pll_video_1x_clk, "pll-video-1x",
++			    pll_video_4x_hws, 4, 1, CLK_SET_RATE_PARENT);
++
++
++/*
++ * For CSI PLLs, the output divider is described as "only for testing"
++ * in the user manual.
++ */
++#define SUN8I_V853_PLL_CSI_REG		0x048
++static struct ccu_nkmp pll_csi_4x_clk = {
++	.enable		= BIT(27),
++	.lock		= BIT(28),
++	.n		= _SUNXI_CCU_MULT_MIN(8, 8, 11),
++	.p		= _SUNXI_CCU_DIV(1, 1), /* input divider */
++	.common		= {
++		.reg		= 0x048,
++		.hw.init	= CLK_HW_INIT_PARENTS_DATA("pll-csi-4x", osc24M,
++							   &ccu_nkmp_ops,
++							   CLK_SET_RATE_GATE),
++	},
++};
++
++static CLK_FIXED_FACTOR_HW(pll_csi_clk, "pll-csi",
++			   &pll_csi_4x_clk.common.hw, 4, 1, CLK_SET_RATE_PARENT);
++
++
++#define SUN8I_V853_PLL_AUDIO_REG	0x078
++static struct ccu_sdm_setting pll_audio_div5_sdm_table[] = {
++	{ .rate = 196608000, .pattern = 0xc001eb85, .m = 5, .n = 40 }, /* 24.576 */
++	{ .rate = 67737600, .pattern = 0xc001288d, .m = 8, .n = 22 }, /* 22.5792 */
++};
++
++static struct ccu_nm pll_audio_div5_clk = {
++	.enable		= BIT(27),
++	.lock           = BIT(28),
++	.n              = _SUNXI_CCU_MULT(8, 8),
++	.m              = _SUNXI_CCU_DIV(20, 3),
++	.sdm            = _SUNXI_CCU_SDM(pll_audio_div5_sdm_table,
++				    BIT(24), 0x0178, BIT(31)),
++	.common         = {
++		.reg            = 0x0078,
++		.features       = CCU_FEATURE_SIGMA_DELTA_MOD,
++		.hw.init        = CLK_HW_INIT_PARENTS_DATA("pll-audio-div5", osc24M,
++							   &ccu_nm_ops,
++							   CLK_SET_RATE_UNGATE),
++	},
++};
++
++static const struct clk_hw *pll_audio_div5_hws[] = {
++	&pll_audio_div5_clk.common.hw
++};
++
++static SUNXI_CCU_M_HWS(pll_audio_1x_clk, "pll-audio-1x", pll_audio_div5_hws,
++		       0xe00, 0, 5, CLK_SET_RATE_PARENT);
++
++/* pll-audio-div2 and pll-audio-4x not used, because pll-audio-1x can cover 
++ * 22.5792M and 24.576M 
++ */
++static SUNXI_CCU_M(pll_audio_div2_clk, "pll-audio-div2", "pll-audio",
++		   0x078, 16, 3, 0);
++static SUNXI_CCU_M(pll_audio_4x_clk, "pll-audio-4x", "pll-audio-div2",
++		   0xe00, 5, 5, 0);
++
++/*
++ * For the NPU PLL, the output divider is described as "only for testing"
++ * in the user manual.
++ */
++#define SUN8I_V853_PLL_NPU_REG		0x080
++static struct ccu_nkmp pll_npu_4x_clk = {
++	.enable		= BIT(27),
++	.lock		= BIT(28),
++	.n		= _SUNXI_CCU_MULT_MIN(8, 8, 11),
++	.p		= _SUNXI_CCU_DIV(1, 1), /* input divider */
++	.common		= {
++		.reg		= 0x080,
++		.hw.init	= CLK_HW_INIT_PARENTS_DATA("pll-npu-4x", osc24M,
++							   &ccu_nkmp_ops,
++							   CLK_SET_RATE_UNGATE),
++	},
++};
++
++/*
++ * The CPU gate is not modelled - it is in a separate register (0x504)
++ * and has a special key field. The clock must not be gated anyway by
++ * the kernel.
++ */
++static const struct clk_parent_data cpu_parents[] = {
++	{ .fw_name = "hosc" },
++	{ .fw_name = "losc" },
++	{ .fw_name = "iosc" },
++	{ .hw = &pll_cpu_clk.common.hw },
++	{ .hw = &pll_periph_600M_clk.hw },
++	{ .hw = &pll_periph_800M_clk.common.hw },
++};
++
++/*
++ * There is a P factor (PLL_OUT_EXT_DIVP[17:16]) in this register, but it is not modeled.
++ * The manual states that it should be used only, when the output clock is less than 288 MHz.
++ */
++static SUNXI_CCU_MUX_DATA(cpu_clk, "cpu", cpu_parents,
++			  0x500, 24, 3, CLK_SET_RATE_PARENT | CLK_IS_CRITICAL);
++
++static const struct clk_hw *cpu_hws[] = { &cpu_clk.common.hw };
++
++static SUNXI_CCU_M_HWS(cpu_axi_clk, "cpu-axi", cpu_hws,
++		       0x500, 0, 2, 0);
++static SUNXI_CCU_M_HWS(cpu_apb_clk, "cpu-apb", cpu_hws,
++		       0x500, 8, 2, 0);
++
++static const struct clk_parent_data ahb_parents[] = {
++	{ .fw_name = "hosc" },
++	{ .fw_name = "losc" },
++	{ .fw_name = "iosc" },
++	{ .hw = &pll_periph_600M_clk.hw },
++};
++static SUNXI_CCU_MP_DATA_WITH_MUX(ahb_clk, "ahb", ahb_parents, 0x510,
++				  0, 5,		/* M */
++				  8, 2,		/* P */
++				  24, 2,	/* mux */
++				  0);
++
++static SUNXI_CCU_MP_DATA_WITH_MUX(apb0_clk, "apb0", ahb_parents, 0x520,
++				  0, 5,		/* M */
++				  8, 2,		/* P */
++				  24, 2,	/* mux */
++				  0);
++
++static SUNXI_CCU_MP_DATA_WITH_MUX(apb1_clk, "apb1", ahb_parents, 0x524,
++				  0, 5,		/* M */
++				  8, 2,		/* P */
++				  24, 2,	/* mux */
++				  0);
++
++static const struct clk_hw *ahb_hws[] = { &ahb_clk.common.hw };
++static const struct clk_hw *apb0_hws[] = { &apb0_clk.common.hw };
++static const struct clk_hw *apb1_hws[] = { &apb1_clk.common.hw };
++
++
++static const struct clk_hw *de_g2d_parents[] = {
++	&pll_periph_300M_clk.hw,
++	&pll_video_1x_clk.hw,
++};
++static SUNXI_CCU_M_HW_WITH_MUX_GATE(de_clk, "de", de_g2d_parents, 0x600,
++				    0, 5,	/* M */
++				    24, 1,	/* mux */
++				    BIT(31),	/* gate */
++				    CLK_SET_RATE_PARENT);
++
++static SUNXI_CCU_GATE_HWS(bus_de_clk, "bus-de", ahb_hws,
++			  0x60c, BIT(0), 0);
++
++static SUNXI_CCU_M_HW_WITH_MUX_GATE(g2d_clk, "g2d", de_g2d_parents, 0x630,
++				    0, 5,	/* M */
++				    24, 1,	/* mux */
++				    BIT(31),	/* gate */
++				    CLK_SET_RATE_PARENT);
++
++static SUNXI_CCU_GATE_HWS(bus_g2d_clk, "bus-g2d", ahb_hws,
++			  0x63c, BIT(0), 0);
++
++
++static const struct clk_parent_data ce_parents[] = {
++	{ .fw_name = "hosc" },
++	{ .hw = &pll_periph_400M_clk.hw, },
++	{ .hw = &pll_periph_300M_clk.hw, }
++};
++static SUNXI_CCU_M_DATA_WITH_MUX_GATE(ce_clk, "ce", ce_parents, 0x680,
++				      0, 4,	/* M */
++				      24, 3,	/* mux */
++				      BIT(31),	/* gate */
++				      CLK_SET_RATE_PARENT);
++
++static SUNXI_CCU_GATE_HWS(bus_ce_clk, "bus-ce", ahb_hws,
++			  0x68c, BIT(0) | BIT(1), 0);
++
++static const struct clk_hw *ve_parents[] = {
++	&pll_periph_300M_clk.hw,
++	&pll_periph_400M_clk.hw,
++	&pll_periph_480M_clk.common.hw,
++	&pll_npu_4x_clk.common.hw,
++	&pll_video_4x_clk.common.hw,
++	&pll_csi_4x_clk.common.hw,
++};
++static SUNXI_CCU_M_HW_WITH_MUX_GATE(ve_clk, "ve", ve_parents, 0x690,
++				    0, 5,	/* M */
++				    24, 3,	/* mux */
++				    BIT(31),	/* gate */
++				    0);
++
++static SUNXI_CCU_GATE_HWS(bus_ve_clk, "bus-ve", ahb_hws,
++			  0x69c, BIT(0), 0);
++
++
++static const struct clk_hw *npu_parents[] = {
++	&pll_periph_480M_clk.common.hw,
++	&pll_periph_600M_clk.hw,
++	&pll_periph_800M_clk.common.hw,
++	&pll_npu_4x_clk.common.hw,
++};
++static SUNXI_CCU_M_HW_WITH_MUX_GATE(npu_clk, "npu", npu_parents, 0x6e0,
++				    0, 5,	/* M */
++				    24, 3,	/* mux */
++				    BIT(31),	/* gate */
++				    0);
++
++static SUNXI_CCU_GATE_HWS(bus_npu_clk, "bus-npu", ahb_hws,
++			  0x6ec, BIT(0), 0);
++
++static SUNXI_CCU_GATE_HWS(bus_dma_clk, "bus-dma", ahb_hws,
++			  0x70c, BIT(0), 0);
++
++static SUNXI_CCU_GATE_HWS(bus_msgbox0_clk, "bus-msgbox0", ahb_hws,
++			  0x71c, BIT(0), 0);
++static SUNXI_CCU_GATE_HWS(bus_msgbox1_clk, "bus-msgbox1", ahb_hws,
++			  0x71c, BIT(1), 0);
++
++static SUNXI_CCU_GATE_HWS(bus_spinlock_clk, "bus-spinlock", ahb_hws,
++			  0x72c, BIT(0), 0);
++
++static SUNXI_CCU_GATE_HWS(bus_hstimer_clk, "bus-hstimer", ahb_hws,
++			  0x73c, BIT(0), 0);
++
++static SUNXI_CCU_GATE_DATA(avs_clk, "avs", osc24M,
++			   0x740, BIT(31), 0);
++
++static SUNXI_CCU_GATE_HWS(bus_dbg_clk, "bus-dbg", ahb_hws,
++			  0x78c, BIT(0), 0);
++
++static SUNXI_CCU_GATE_HWS(bus_pwm_clk, "bus-pwm", apb0_hws,
++			  0x7ac, BIT(0), 0);
++
++static SUNXI_CCU_GATE_HWS(bus_iommu_clk, "bus-iommu", ahb_hws,
++			  0x7bc, BIT(0), 0);
++
++static const struct clk_hw *dram_parents[] = {
++	&pll_ddr_clk.common.hw,
++	&pll_periph_2x_clk.common.hw,
++	&pll_periph_800M_clk.common.hw,
++};
++static SUNXI_CCU_MP_HW_WITH_MUX_GATE(dram_clk, "dram", dram_parents, 0x800,
++				     0, 5,	/* M */
++				     8, 2,	/* P */
++				     24, 3,	/* mux */
++				     BIT(31), CLK_IS_CRITICAL);
++
++static CLK_FIXED_FACTOR_HW(mbus_clk, "mbus",
++			   &dram_clk.common.hw, 4, 1, 0);
++
++static const struct clk_hw *mbus_hws[] = { &mbus_clk.hw };
++
++static SUNXI_CCU_GATE_HWS(mbus_dma_clk, "mbus-dma", mbus_hws,
++			  0x804, BIT(0), 0);
++static SUNXI_CCU_GATE_HWS(mbus_ve_clk, "mbus-ve", mbus_hws,
++			  0x804, BIT(1), 0);
++static SUNXI_CCU_GATE_HWS(mbus_ce_clk, "mbus-ce", mbus_hws,
++			  0x804, BIT(2), 0);
++static SUNXI_CCU_GATE_HWS(mbus_csi_clk, "mbus-csi", mbus_hws,
++			  0x804, BIT(8), 0);
++static SUNXI_CCU_GATE_HWS(mbus_isp_clk, "mbus-isp", mbus_hws,
++			  0x804, BIT(9), 0);
++static SUNXI_CCU_GATE_HWS(mbus_g2d_clk, "mbus-g2d", mbus_hws,
++			  0x804, BIT(10), 0);
++
++static SUNXI_CCU_GATE_HWS(bus_dram_clk, "bus-dram", ahb_hws,
++			  0x80c, BIT(0), CLK_IS_CRITICAL);
++
++
++static const struct clk_parent_data mmc0_mmc1_parents[] = {
++	{ .fw_name = "hosc" },
++	{ .hw = &pll_periph_400M_clk.hw, },
++	{ .hw = &pll_periph_300M_clk.hw, },
++};
++static SUNXI_CCU_MP_DATA_WITH_MUX_GATE(mmc0_clk, "mmc0", mmc0_mmc1_parents, 0x830,
++				       0, 4,	/* M */
++				       8, 2,	/* P */
++				       24, 3,	/* mux */
++				       BIT(31),	/* gate */
++				       0);
++
++static SUNXI_CCU_MP_DATA_WITH_MUX_GATE(mmc1_clk, "mmc1", mmc0_mmc1_parents, 0x834,
++				       0, 4,	/* M */
++				       8, 2,	/* P */
++				       24, 3,	/* mux */
++				       BIT(31),	/* gate */
++				       0);
++
++static const struct clk_parent_data mmc2_parents[] = {
++	{ .fw_name = "hosc" },
++	{ .hw = &pll_periph_600M_clk.hw, },
++	{ .hw = &pll_periph_400M_clk.hw, },
++};
++static SUNXI_CCU_MP_DATA_WITH_MUX_GATE(mmc2_clk, "mmc2", mmc2_parents, 0x838,
++				       0, 4,	/* M */
++				       8, 2,	/* P */
++				       24, 3,	/* mux */
++				       BIT(31),	/* gate */
++				       0);
++
++static SUNXI_CCU_GATE_HWS(bus_mmc0_clk, "bus-mmc0", ahb_hws,
++			  0x84c, BIT(0), 0);
++static SUNXI_CCU_GATE_HWS(bus_mmc1_clk, "bus-mmc1", ahb_hws,
++			  0x84c, BIT(1), 0);
++static SUNXI_CCU_GATE_HWS(bus_mmc2_clk, "bus-mmc2", ahb_hws,
++			  0x84c, BIT(2), 0);
++
++static SUNXI_CCU_GATE_HWS(bus_uart0_clk, "bus-uart0", apb1_hws,
++			  0x90c, BIT(0), 0);
++static SUNXI_CCU_GATE_HWS(bus_uart1_clk, "bus-uart1", apb1_hws,
++			  0x90c, BIT(1), 0);
++static SUNXI_CCU_GATE_HWS(bus_uart2_clk, "bus-uart2", apb1_hws,
++			  0x90c, BIT(2), 0);
++static SUNXI_CCU_GATE_HWS(bus_uart3_clk, "bus-uart3", apb1_hws,
++			  0x90c, BIT(3), 0);
++
++static SUNXI_CCU_GATE_HWS(bus_i2c0_clk, "bus-i2c0", apb1_hws,
++			  0x91c, BIT(0), 0);
++static SUNXI_CCU_GATE_HWS(bus_i2c1_clk, "bus-i2c1", apb1_hws,
++			  0x91c, BIT(1), 0);
++static SUNXI_CCU_GATE_HWS(bus_i2c2_clk, "bus-i2c2", apb1_hws,
++			  0x91c, BIT(2), 0);
++static SUNXI_CCU_GATE_HWS(bus_i2c3_clk, "bus-i2c3", apb1_hws,
++			  0x91c, BIT(3), 0);
++static SUNXI_CCU_GATE_HWS(bus_i2c4_clk, "bus-i2c4", apb1_hws,
++			  0x91c, BIT(4), 0);
++
++static const struct clk_parent_data spi_parents[] = {
++	{ .fw_name = "hosc" },
++	{ .hw = &pll_periph_300M_clk.hw, },
++	{ .hw = &pll_periph_200M_clk.hw, },
++};
++
++static SUNXI_CCU_MP_DATA_WITH_MUX_GATE(spi0_clk, "spi0", spi_parents, 0x940,
++				       0, 4,	/* M */
++				       8, 2,	/* P */
++				       24, 3,	/* mux */
++				       BIT(31),	/* gate */
++				       0);
++
++static SUNXI_CCU_MP_DATA_WITH_MUX_GATE(spi1_clk, "spi1", spi_parents, 0x944,
++				       0, 4,	/* M */
++				       8, 2,	/* P */
++				       24, 3,	/* mux */
++				       BIT(31),	/* gate */
++				       0);
++
++static SUNXI_CCU_MP_DATA_WITH_MUX_GATE(spi2_clk, "spi2", spi_parents, 0x948,
++				       0, 4,	/* M */
++				       8, 2,	/* P */
++				       24, 3,	/* mux */
++				       BIT(31),	/* gate */
++				       0);
++
++static SUNXI_CCU_MP_DATA_WITH_MUX_GATE(spi3_clk, "spi3", spi_parents, 0x94c,
++				       0, 4,	/* M */
++				       8, 2,	/* P */
++				       24, 3,	/* mux */
++				       BIT(31),	/* gate */
++				       0);
++
++static SUNXI_CCU_GATE_HWS(bus_spi0_clk, "bus-spi0", ahb_hws,
++			  0x96c, BIT(0), 0);
++static SUNXI_CCU_GATE_HWS(bus_spi1_clk, "bus-spi1", ahb_hws,
++			  0x96c, BIT(1), 0);
++static SUNXI_CCU_GATE_HWS(bus_spi2_clk, "bus-spi2", ahb_hws,
++			  0x96c, BIT(2), 0);
++static SUNXI_CCU_GATE_HWS(bus_spi3_clk, "bus-spi3", ahb_hws,
++			  0x96c, BIT(3), 0);
++
++
++static const struct clk_parent_data spif_parents[] = {
++	{ .fw_name = "hosc" },
++	{ .hw = &pll_periph_400M_clk.hw, },
++	{ .hw = &pll_periph_300M_clk.hw, },
++};
++
++static SUNXI_CCU_M_DATA_WITH_MUX_GATE(spif_clk, "spif", spif_parents, 0x0950,
++				      0, 4,	/* M */
++				      24, 3,	/* mux */
++				      BIT(31),	/* gate */
++				      CLK_SET_RATE_PARENT);
++
++static SUNXI_CCU_GATE_HWS(bus_spif_clk, "bus-spif", ahb_hws,
++			  0x096c, BIT(4), 0);
++
++
++static const struct clk_hw *pll_periph_150M_hws[] = { &pll_periph_150M_clk.hw };
++static SUNXI_CCU_GATE_HWS_WITH_PREDIV(emac_25M_clk, "emac-25M", pll_periph_150M_hws,
++				      0x970, BIT(31) | BIT(30), 6, 0);
++
++static SUNXI_CCU_GATE_HWS(bus_emac_clk, "bus-emac", ahb_hws,
++			  0x97c, BIT(0), 0);
++
++static SUNXI_CCU_GATE_HWS(bus_gpadc_clk, "bus-gpadc", apb0_hws,
++			  0x9ec, BIT(0), 0);
++
++static SUNXI_CCU_GATE_HWS(bus_ths_clk, "bus-ths", ahb_hws,
++			  0x9fc, BIT(0), 0);
++
++
++static const struct clk_hw *audio_parents[] = {
++	&pll_audio_1x_clk.common.hw,
++	&pll_audio_4x_clk.common.hw,
++};
++
++static SUNXI_CCU_M_HW_WITH_MUX_GATE(i2s0_clk, "i2s0", audio_parents, 0xa10,
++				    0, 4,	/* M */
++				    24, 1,	/* mux */
++				    BIT(31),	/* gate */
++				    CLK_SET_RATE_PARENT);
++
++static SUNXI_CCU_M_HW_WITH_MUX_GATE(i2s1_clk, "i2s1", audio_parents, 0xa14,
++				    0, 4,	/* M */
++				    24, 1,	/* mux */
++				    BIT(31),	/* gate */
++				    CLK_SET_RATE_PARENT);
++
++static SUNXI_CCU_GATE_HWS(bus_i2s0_clk, "bus-i2s0", ahb_hws,
++			  0xa20, BIT(0), 0);
++
++static SUNXI_CCU_GATE_HWS(bus_i2s1_clk, "bus-i2s1", ahb_hws,
++			  0xa20, BIT(1), 0);
++
++static SUNXI_CCU_M_HW_WITH_MUX_GATE(dmic_clk, "dmic", audio_parents, 0xa40,
++				    0, 4,	/* M */
++				    24, 1,	/* mux */
++				    BIT(31),	/* gate */
++				    CLK_SET_RATE_PARENT);
++
++static SUNXI_CCU_GATE_HWS(bus_dmic_clk, "bus-dmic", ahb_hws,
++			  0xa4c, BIT(0), 0);
++
++static SUNXI_CCU_M_HW_WITH_MUX_GATE(audio_codec_dac_clk, "audio-codec-dac", 
++				    audio_parents, 0xa50,
++				    0, 4,	/* M */
++				    24, 1,	/* mux */
++				    BIT(31),	/* gate */
++				    CLK_SET_RATE_PARENT);
++
++static SUNXI_CCU_M_HW_WITH_MUX_GATE(audio_codec_adc_clk, "audio-codec-adc", 
++				    audio_parents, 0xa54,
++				    0, 4,	/* M */
++				    24, 1,	/* mux */
++				    BIT(31),	/* gate */
++				    CLK_SET_RATE_PARENT);
++
++static SUNXI_CCU_GATE_HWS(bus_audio_codec_clk, "bus-audio-codec", apb0_hws,
++			  0xa5c, BIT(0), 0);
++
++/*
++ * There are OHCI 12M clock source selection bits for the USB 2.0 port.
++ * We will force them to 0 (12M divided from 48M).
++ */
++static CLK_FIXED_FACTOR_FW_NAME(osc12M_clk, "osc12M", "hosc", 2, 1, 0);
++
++#define SUN8I_V853_USB_CLK_REG		0xa70
++
++static SUNXI_CCU_GATE(usb_ohci_clk, "usb", "osc12M", 0x0a70, BIT(31), 0);
++
++static SUNXI_CCU_GATE_HWS(bus_ohci_clk, "bus-ohci", ahb_hws, 0xa8c, BIT(0), 0);
++static SUNXI_CCU_GATE_HWS(bus_ehci_clk, "bus-ehci", ahb_hws, 0xa8c, BIT(4), 0);
++static SUNXI_CCU_GATE_HWS(bus_otg_clk, "bus-otg", ahb_hws, 0xa8c, BIT(8), 0);
++
++static SUNXI_CCU_GATE_HWS(bus_dpss_top_clk, "bus-dpss-top", ahb_hws,
++			  0xabc, BIT(0), 0);
++
++
++static const struct clk_parent_data mipi_dsi_parents[] = {
++	{ .fw_name = "hosc" },
++	{ .hw = &pll_periph_200M_clk.hw },
++	{ .hw = &pll_periph_150M_clk.hw },
++};
++static SUNXI_CCU_M_DATA_WITH_MUX_GATE(mipi_dsi_clk, "mipi-dsi", mipi_dsi_parents, 
++				      0xb24,
++				      0, 4,	/* M */
++				      24, 3,	/* mux */
++				      BIT(31),	/* gate */
++				      CLK_SET_RATE_PARENT);
++
++static SUNXI_CCU_GATE_HWS(bus_mipi_dsi_clk, "bus-mipi-dsi", ahb_hws,
++			  0xb4c, BIT(0), 0);
++
++
++static const struct clk_hw *tcon_lcd_parents[] = {
++	&pll_video_4x_clk.common.hw,
++	&pll_periph_2x_clk.common.hw,
++	&pll_csi_4x_clk.common.hw,
++};
++static SUNXI_CCU_MP_HW_WITH_MUX_GATE(tcon_lcd_clk, "tcon-lcd", tcon_lcd_parents, 
++				     0xb60,
++				     0, 4,	/* M */
++				     8, 2,	/* P */
++				     24, 3,	/* mux */
++				     BIT(31),	/* gate */
++				     CLK_SET_RATE_PARENT);
++
++static SUNXI_CCU_GATE_HWS(bus_tcon_lcd_clk, "bus-tcon-lcd", ahb_hws,
++			  0xb7c, BIT(0), 0);
++
++
++static const struct clk_hw *csi_top_parents[] = {
++	&pll_periph_300M_clk.hw,
++	&pll_periph_400M_clk.hw,
++	&pll_video_4x_clk.common.hw,
++	&pll_csi_4x_clk.common.hw,
++};
++static SUNXI_CCU_M_HW_WITH_MUX_GATE(csi_top_clk, "csi-top", csi_top_parents, 0xc04,
++				    0, 5,	/* M */
++				    24, 3,	/* mux */
++				    BIT(31),	/* gate */
++				    0);
++
++
++static const struct clk_parent_data csi_mclk_parents[] = {
++	{ .fw_name = "hosc" },
++	{ .hw = &pll_csi_4x_clk.common.hw },
++	{ .hw = &pll_video_4x_clk.common.hw },
++	{ .hw = &pll_periph_2x_clk.common.hw },
++};
++static SUNXI_CCU_M_DATA_WITH_MUX_GATE(csi_mclk0_clk, "csi-mclk0", csi_mclk_parents, 
++				      0xc08,
++				      0, 5,	/* M */
++				      24, 3,	/* mux */
++				      BIT(31),	/* gate */
++				      0);
++
++static SUNXI_CCU_M_DATA_WITH_MUX_GATE(csi_mclk1_clk, "csi-mclk1", csi_mclk_parents, 
++				      0xc0c,
++				      0, 5,	/* M */
++				      24, 3,	/* mux */
++				      BIT(31),	/* gate */
++				      0);
++
++static SUNXI_CCU_M_DATA_WITH_MUX_GATE(csi_mclk2_clk, "csi-mclk2", csi_mclk_parents, 
++				      0xc10,
++				      0, 5,	/* M */
++				      24, 3,	/* mux */
++				      BIT(31),	/* gate */
++				      0);
++
++static SUNXI_CCU_GATE_HWS(bus_csi_clk, "bus-csi", ahb_hws,
++			  0xc2c, BIT(0), 0);
++
++
++static SUNXI_CCU_GATE_HWS(bus_wiegand_clk, "bus-wiegand", ahb_hws,
++			  0xc7c, BIT(0), 0);
++
++
++static const struct clk_parent_data riscv_parents[] = {
++	{ .fw_name = "hosc" },
++	{ .fw_name = "losc" },
++	{ .fw_name = "iosc" },
++	{ .hw = &pll_periph_600M_clk.hw },
++	{ .hw = &pll_periph_480M_clk.common.hw },
++	{ .hw = &pll_cpu_clk.common.hw },
++};
++static SUNXI_CCU_M_DATA_WITH_MUX(riscv_clk, "riscv-cpu", riscv_parents, 0xd00,
++				 0, 5,	/* M */
++				 24, 3,	/* mux */
++				 CLK_SET_RATE_PARENT);
++
++/* The riscv-axi clk must be divided by at least 2. */
++static struct clk_div_table riscv_axi_table[] = {
++	{ .val = 1, .div = 2 },
++	{ .val = 2, .div = 3 },
++	{ .val = 3, .div = 4 },
++	{ /* Sentinel */ }
++};
++static SUNXI_CCU_DIV_TABLE_HW(riscv_axi_clk, "riscv-axi", &riscv_clk.common.hw,
++			      0xd00, 8, 2, riscv_axi_table, 0);
++
++static SUNXI_CCU_GATE_HWS_WITH_KEY(riscv_core_gate, "riscv-core-gate", ahb_hws,
++				   0xd04, BIT(0), 0);
++
++static SUNXI_CCU_GATE_HWS(riscv_cfg_gate, "riscv-cfg-gate", ahb_hws,
++			  0xd0c, BIT(0), 0);
++
++
++static const struct clk_hw *pll_periph_160M_hws[] = {
++	&pll_periph_160M_clk.hw,
++};
++
++static SUNXI_CCU_GATE_DATA(fanout_24M_clk, "fanout-24M", osc24M,
++			   0xf30, BIT(0), 0);
++static SUNXI_CCU_GATE_DATA_WITH_PREDIV(fanout_12M_clk, "fanout-12M", osc24M,
++				       0xf30, BIT(1), 2, 0);
++static SUNXI_CCU_GATE_HWS_WITH_PREDIV(fanout_16M_clk, "fanout-16M", pll_periph_160M_hws,
++				      0xf30, BIT(2), 10, 0);
++static SUNXI_CCU_GATE_HWS_WITH_PREDIV(fanout_25M_clk, "fanout-25M", pll_periph_150M_hws,
++				      0xf30, BIT(3), 6, 0);
++
++
++/* This clock has a second divider that is not modelled and forced to 0. */
++#define SUN8I_V853_FANOUT_27M_REG	0xf34
++static const struct clk_hw *fanout_27M_parents[] = {
++	&pll_video_1x_clk.hw,
++	&pll_csi_clk.hw,
++	&pll_periph_300M_clk.hw,
++};
++static SUNXI_CCU_M_HW_WITH_MUX_GATE(fanout_27M_clk, "fanout-27M", 
++				    fanout_27M_parents, 0xf34,
++				    0, 5,	/* M */
++				    24, 2,	/* mux */
++				    BIT(31),	/* gate */
++				    0);
++static SUNXI_CCU_M_HWS_WITH_GATE(fanout_pclk_clk, "fanout-pclk", apb0_hws, 0xf38,
++				 0, 5,		/* M */
++				 BIT(31),	/* gate */
++				 0);
++
++static const struct clk_parent_data fanout_parents[] = {
++	{ .fw_name = "losc" },
++	{ .hw = &fanout_12M_clk.common.hw },
++	{ .hw = &fanout_16M_clk.common.hw },
++	{ .hw = &fanout_24M_clk.common.hw },
++	{ .hw = &fanout_25M_clk.common.hw },
++	{ .hw = &fanout_27M_clk.common.hw },
++	{ .hw = &fanout_pclk_clk.common.hw },
++};
++
++static SUNXI_CCU_MUX_DATA_WITH_GATE(fanout0_clk, "fanout0", fanout_parents, 0xf3c,
++				    0, 3,	/* mux */
++				    BIT(21),	/* gate */
++				    0);
++static SUNXI_CCU_MUX_DATA_WITH_GATE(fanout1_clk, "fanout1", fanout_parents, 0xf3c,
++				    3, 3,	/* mux */
++				    BIT(22),	/* gate */
++				    0);
++static SUNXI_CCU_MUX_DATA_WITH_GATE(fanout2_clk, "fanout2", fanout_parents, 0xf3c,
++				    6, 3,	/* mux */
++				    BIT(23),	/* gate */
++				    0);
++
++
++static struct ccu_common *sun8i_v853_ccu_clks[] = {
++	&pll_cpu_clk.common,
++	&pll_ddr_clk.common,
++	&pll_periph_4x_clk.common,
++	&pll_periph_2x_clk.common,
++	&pll_periph_800M_clk.common,
++	&pll_periph_480M_clk.common,
++	&pll_video_4x_clk.common,
++	&pll_csi_4x_clk.common,
++	&pll_audio_div2_clk.common,
++	&pll_audio_div5_clk.common,
++	&pll_audio_4x_clk.common,
++	&pll_audio_1x_clk.common,
++	&pll_npu_4x_clk.common,
++	&cpu_clk.common,
++	&cpu_axi_clk.common,
++	&cpu_apb_clk.common,
++	&ahb_clk.common,
++	&apb0_clk.common,
++	&apb1_clk.common,
++	&de_clk.common,
++	&bus_de_clk.common,
++	&g2d_clk.common,
++	&bus_g2d_clk.common,
++	&ce_clk.common,
++	&bus_ce_clk.common,
++	&ve_clk.common,
++	&bus_ve_clk.common,
++	&npu_clk.common,
++	&bus_npu_clk.common,
++	&bus_dma_clk.common,
++	&bus_msgbox0_clk.common,
++	&bus_msgbox1_clk.common,
++	&bus_spinlock_clk.common,
++	&bus_hstimer_clk.common,
++	&avs_clk.common,
++	&bus_dbg_clk.common,
++	&bus_pwm_clk.common,
++	&bus_iommu_clk.common,
++	&dram_clk.common,
++	&mbus_dma_clk.common,
++	&mbus_ve_clk.common,
++	&mbus_ce_clk.common,
++	&mbus_csi_clk.common,
++	&mbus_isp_clk.common,
++	&mbus_g2d_clk.common,
++	&bus_dram_clk.common,
++	&mmc0_clk.common,
++	&mmc1_clk.common,
++	&mmc2_clk.common,
++	&bus_mmc0_clk.common,
++	&bus_mmc1_clk.common,
++	&bus_mmc2_clk.common,
++	&bus_uart0_clk.common,
++	&bus_uart1_clk.common,
++	&bus_uart2_clk.common,
++	&bus_uart3_clk.common,
++	&bus_i2c0_clk.common,
++	&bus_i2c1_clk.common,
++	&bus_i2c2_clk.common,
++	&bus_i2c3_clk.common,
++	&bus_i2c4_clk.common,
++	&spi0_clk.common,
++	&spi1_clk.common,
++	&spi2_clk.common,
++	&spi3_clk.common,
++	&bus_spi0_clk.common,
++	&bus_spi1_clk.common,
++	&bus_spi2_clk.common,
++	&bus_spi3_clk.common,
++	&spif_clk.common,
++	&bus_spif_clk.common,
++	&emac_25M_clk.common,
++	&bus_emac_clk.common,
++	&bus_gpadc_clk.common,
++	&bus_ths_clk.common,
++	&usb_ohci_clk.common,
++	&bus_ohci_clk.common,
++	&bus_ehci_clk.common,
++	&bus_otg_clk.common,
++	&i2s0_clk.common,
++	&i2s1_clk.common,
++	&bus_i2s0_clk.common,
++	&bus_i2s1_clk.common,
++	&dmic_clk.common,
++	&bus_dmic_clk.common,
++	&audio_codec_dac_clk.common,
++	&audio_codec_adc_clk.common,
++	&bus_audio_codec_clk.common,
++	&bus_dpss_top_clk.common,
++	&mipi_dsi_clk.common,
++	&bus_mipi_dsi_clk.common,
++	&tcon_lcd_clk.common,
++	&bus_tcon_lcd_clk.common,
++	&csi_top_clk.common,
++	&csi_mclk0_clk.common,
++	&csi_mclk1_clk.common,
++	&csi_mclk2_clk.common,
++	&bus_csi_clk.common,
++	&bus_wiegand_clk.common,
++	&riscv_clk.common,
++	&riscv_axi_clk.common,
++	&riscv_core_gate.common,
++	&riscv_cfg_gate.common,
++	&fanout_24M_clk.common,
++	&fanout_12M_clk.common,
++	&fanout_16M_clk.common,
++	&fanout_25M_clk.common,
++	&fanout_27M_clk.common,
++	&fanout_pclk_clk.common,
++	&fanout0_clk.common,
++	&fanout1_clk.common,
++	&fanout2_clk.common,
++};
++
++static struct clk_hw_onecell_data sun8i_v853_hw_clks = {
++	.num	= CLK_NUMBER,
++	.hws	= {
++		[CLK_OSC12M]            = &osc12M_clk.hw,
++		[CLK_PLL_CPU]		= &pll_cpu_clk.common.hw,
++		[CLK_PLL_DDR]		= &pll_ddr_clk.common.hw,
++		[CLK_PLL_PERIPH_4X]	= &pll_periph_4x_clk.common.hw,
++		[CLK_PLL_PERIPH_2X]	= &pll_periph_2x_clk.common.hw,
++		[CLK_PLL_PERIPH_800M]	= &pll_periph_800M_clk.common.hw,
++		[CLK_PLL_PERIPH_480M]	= &pll_periph_480M_clk.common.hw,
++		[CLK_PLL_PERIPH_600M]	= &pll_periph_600M_clk.hw,
++		[CLK_PLL_PERIPH_400M]	= &pll_periph_400M_clk.hw,
++		[CLK_PLL_PERIPH_300M]	= &pll_periph_300M_clk.hw,
++		[CLK_PLL_PERIPH_200M]	= &pll_periph_200M_clk.hw,
++		[CLK_PLL_PERIPH_160M]	= &pll_periph_160M_clk.hw,
++		[CLK_PLL_PERIPH_150M]	= &pll_periph_150M_clk.hw,
++		[CLK_PLL_VIDEO_4X]	= &pll_video_4x_clk.common.hw,
++		[CLK_PLL_VIDEO_2X]	= &pll_video_2x_clk.hw,
++		[CLK_PLL_VIDEO_1X]	= &pll_video_1x_clk.hw,
++		[CLK_PLL_CSI_4X]	= &pll_csi_4x_clk.common.hw,
++		[CLK_PLL_AUDIO_DIV2]	= &pll_audio_div2_clk.common.hw,
++		[CLK_PLL_AUDIO_DIV5]	= &pll_audio_div5_clk.common.hw,
++		[CLK_PLL_AUDIO_4X]	= &pll_audio_4x_clk.common.hw,
++		[CLK_PLL_AUDIO_1X]	= &pll_audio_1x_clk.common.hw,
++		[CLK_PLL_NPU_4X]	= &pll_npu_4x_clk.common.hw,
++		[CLK_CPU]		= &cpu_clk.common.hw,
++		[CLK_CPU_AXI]		= &cpu_axi_clk.common.hw,
++		[CLK_CPU_APB]		= &cpu_apb_clk.common.hw,
++		[CLK_AHB]		= &ahb_clk.common.hw,
++		[CLK_APB0]		= &apb0_clk.common.hw,
++		[CLK_APB1]		= &apb1_clk.common.hw,
++		[CLK_MBUS]		= &mbus_clk.hw,
++		[CLK_DE]		= &de_clk.common.hw,
++		[CLK_BUS_DE]		= &bus_de_clk.common.hw,
++		[CLK_G2D]		= &g2d_clk.common.hw,
++		[CLK_BUS_G2D]		= &bus_g2d_clk.common.hw,
++		[CLK_CE]		= &ce_clk.common.hw,
++		[CLK_BUS_CE]		= &bus_ce_clk.common.hw,
++		[CLK_VE]		= &ve_clk.common.hw,
++		[CLK_BUS_VE]		= &bus_ve_clk.common.hw,
++		[CLK_NPU]		= &npu_clk.common.hw,
++		[CLK_BUS_NPU]		= &bus_npu_clk.common.hw,
++		[CLK_BUS_DMA]		= &bus_dma_clk.common.hw,
++		[CLK_BUS_MSGBOX0]	= &bus_msgbox0_clk.common.hw,
++		[CLK_BUS_MSGBOX1]	= &bus_msgbox1_clk.common.hw,
++		[CLK_BUS_SPINLOCK]	= &bus_spinlock_clk.common.hw,
++		[CLK_BUS_HSTIMER]	= &bus_hstimer_clk.common.hw,
++		[CLK_AVS]		= &avs_clk.common.hw,
++		[CLK_BUS_DBG]		= &bus_dbg_clk.common.hw,
++		[CLK_BUS_PWM]		= &bus_pwm_clk.common.hw,
++		[CLK_BUS_IOMMU]		= &bus_iommu_clk.common.hw,
++		[CLK_DRAM]		= &dram_clk.common.hw,
++		[CLK_MBUS_DMA]		= &mbus_dma_clk.common.hw,
++		[CLK_MBUS_VE]		= &mbus_ve_clk.common.hw,
++		[CLK_MBUS_CE]		= &mbus_ce_clk.common.hw,
++		[CLK_MBUS_CSI]		= &mbus_csi_clk.common.hw,
++		[CLK_MBUS_ISP]		= &mbus_isp_clk.common.hw,
++		[CLK_MBUS_G2D]		= &mbus_g2d_clk.common.hw,
++		[CLK_BUS_DRAM]		= &bus_dram_clk.common.hw,
++		[CLK_MMC0]		= &mmc0_clk.common.hw,
++		[CLK_MMC1]		= &mmc1_clk.common.hw,
++		[CLK_MMC2]		= &mmc2_clk.common.hw,
++		[CLK_BUS_MMC0]		= &bus_mmc0_clk.common.hw,
++		[CLK_BUS_MMC1]		= &bus_mmc1_clk.common.hw,
++		[CLK_BUS_MMC2]		= &bus_mmc2_clk.common.hw,
++		[CLK_BUS_UART0]		= &bus_uart0_clk.common.hw,
++		[CLK_BUS_UART1]		= &bus_uart1_clk.common.hw,
++		[CLK_BUS_UART2]		= &bus_uart2_clk.common.hw,
++		[CLK_BUS_UART3]		= &bus_uart3_clk.common.hw,
++		[CLK_BUS_I2C0]		= &bus_i2c0_clk.common.hw,
++		[CLK_BUS_I2C1]		= &bus_i2c1_clk.common.hw,
++		[CLK_BUS_I2C2]		= &bus_i2c2_clk.common.hw,
++		[CLK_BUS_I2C3]		= &bus_i2c3_clk.common.hw,
++		[CLK_BUS_I2C4]		= &bus_i2c4_clk.common.hw,
++		[CLK_SPI0]		= &spi0_clk.common.hw,
++		[CLK_SPI1]		= &spi1_clk.common.hw,
++		[CLK_SPI2]		= &spi2_clk.common.hw,
++		[CLK_SPI3]		= &spi3_clk.common.hw,
++		[CLK_BUS_SPI0]		= &bus_spi0_clk.common.hw,
++		[CLK_BUS_SPI1]		= &bus_spi1_clk.common.hw,
++		[CLK_BUS_SPI2]		= &bus_spi2_clk.common.hw,
++		[CLK_BUS_SPI3]		= &bus_spi3_clk.common.hw,
++		[CLK_SPIF]		= &spif_clk.common.hw,
++		[CLK_BUS_SPIF]		= &bus_spif_clk.common.hw,
++		[CLK_EMAC_25M]		= &emac_25M_clk.common.hw,
++		[CLK_BUS_EMAC]		= &bus_emac_clk.common.hw,
++		[CLK_BUS_GPADC]		= &bus_gpadc_clk.common.hw,
++		[CLK_BUS_THS]		= &bus_ths_clk.common.hw,
++		[CLK_I2S0]		= &i2s0_clk.common.hw,
++		[CLK_I2S1]		= &i2s1_clk.common.hw,
++		[CLK_BUS_I2S0]		= &bus_i2s0_clk.common.hw,
++		[CLK_BUS_I2S1]		= &bus_i2s1_clk.common.hw,
++		[CLK_DMIC]		= &dmic_clk.common.hw,
++		[CLK_BUS_DMIC]		= &bus_dmic_clk.common.hw,
++		[CLK_AUDIO_CODEC_DAC]	= &audio_codec_dac_clk.common.hw,
++		[CLK_AUDIO_CODEC_ADC]	= &audio_codec_adc_clk.common.hw,
++		[CLK_BUS_AUDIO_CODEC]	= &bus_audio_codec_clk.common.hw,
++		[CLK_USB_OHCI]		= &usb_ohci_clk.common.hw,
++		[CLK_BUS_OHCI]		= &bus_ohci_clk.common.hw,
++		[CLK_BUS_EHCI]		= &bus_ehci_clk.common.hw,
++		[CLK_BUS_OTG]		= &bus_otg_clk.common.hw,
++		[CLK_BUS_DPSS_TOP]	= &bus_dpss_top_clk.common.hw,
++		[CLK_MIPI_DSI]		= &mipi_dsi_clk.common.hw,
++		[CLK_BUS_MIPI_DSI]	= &bus_mipi_dsi_clk.common.hw,
++		[CLK_TCON_LCD]		= &tcon_lcd_clk.common.hw,
++		[CLK_BUS_TCON_LCD]	= &bus_tcon_lcd_clk.common.hw,
++		[CLK_CSI_TOP]		= &csi_top_clk.common.hw,
++		[CLK_CSI_MCLK0]		= &csi_mclk0_clk.common.hw,
++		[CLK_CSI_MCLK1]		= &csi_mclk1_clk.common.hw,
++		[CLK_CSI_MCLK2]		= &csi_mclk2_clk.common.hw,
++		[CLK_BUS_CSI]		= &bus_csi_clk.common.hw,
++		[CLK_BUS_WIEGAND]	= &bus_wiegand_clk.common.hw,
++		[CLK_RISCV]		= &riscv_clk.common.hw,
++		[CLK_RISCV_AXI]		= &riscv_axi_clk.common.hw,
++		[CLK_RISCV_CORE_GATE]   = &riscv_core_gate.common.hw,
++		[CLK_RISCV_CFG_GATE]    = &riscv_cfg_gate.common.hw,
++		[CLK_FANOUT_24M]	= &fanout_24M_clk.common.hw,
++		[CLK_FANOUT_16M]	= &fanout_16M_clk.common.hw,
++		[CLK_FANOUT_12M]	= &fanout_12M_clk.common.hw,
++		[CLK_FANOUT_25M]	= &fanout_25M_clk.common.hw,
++		[CLK_FANOUT_27M]	= &fanout_27M_clk.common.hw,
++		[CLK_FANOUT_PCLK]	= &fanout_pclk_clk.common.hw,
++		[CLK_FANOUT0]		= &fanout0_clk.common.hw,
++		[CLK_FANOUT1]		= &fanout1_clk.common.hw,
++		[CLK_FANOUT2]		= &fanout2_clk.common.hw,
++	},
++};
++
++static struct ccu_reset_map sun8i_v853_ccu_resets[] = {
++	[RST_MBUS]		= { 0x540, BIT(30) },
++	[RST_BUS_DE]		= { 0x60c, BIT(16) },
++	[RST_BUS_G2D]		= { 0x63c, BIT(16) },
++	[RST_BUS_CE]		= { 0x68c, BIT(16) | BIT(17)},
++	[RST_BUS_VE]		= { 0x69c, BIT(16) },
++	[RST_BUS_NPU]		= { 0x6ec, BIT(16) },
++	[RST_BUS_DMA]		= { 0x70c, BIT(16) },
++	[RST_BUS_MSGBOX0]	= { 0x71c, BIT(16) },
++	[RST_BUS_MSGBOX1]	= { 0x71c, BIT(17) },
++	[RST_BUS_SPINLOCK]	= { 0x72c, BIT(16) },
++	[RST_BUS_HSTIMER]	= { 0x73c, BIT(16) },
++	[RST_BUS_DBG]		= { 0x78c, BIT(16) },
++	[RST_BUS_PWM]		= { 0x7ac, BIT(16) },
++	[RST_BUS_DRAM]		= { 0x80c, BIT(16) },
++	[RST_BUS_MMC0]		= { 0x84c, BIT(16) },
++	[RST_BUS_MMC1]		= { 0x84c, BIT(17) },
++	[RST_BUS_MMC2]		= { 0x84c, BIT(18) },
++	[RST_BUS_UART0]		= { 0x90c, BIT(16) },
++	[RST_BUS_UART1]		= { 0x90c, BIT(17) },
++	[RST_BUS_UART2]		= { 0x90c, BIT(18) },
++	[RST_BUS_UART3]		= { 0x90c, BIT(19) },
++	[RST_BUS_I2C0]		= { 0x91c, BIT(16) },
++	[RST_BUS_I2C1]		= { 0x91c, BIT(17) },
++	[RST_BUS_I2C2]		= { 0x91c, BIT(18) },
++	[RST_BUS_I2C3]		= { 0x91c, BIT(19) },
++	[RST_BUS_I2C4]		= { 0x91c, BIT(20) },
++	[RST_BUS_SPI0]		= { 0x96c, BIT(16) },
++	[RST_BUS_SPI1]		= { 0x96c, BIT(17) },
++	[RST_BUS_SPI2]		= { 0x96c, BIT(18) },
++	[RST_BUS_SPI3]		= { 0x96c, BIT(19) },
++	[RST_BUS_SPIF]		= { 0x96c, BIT(20) },
++	[RST_BUS_EMAC]		= { 0x97c, BIT(16) },
++	[RST_BUS_GPADC]		= { 0x9ec, BIT(16) },
++	[RST_BUS_THS]		= { 0x9fc, BIT(16) },
++	[RST_BUS_I2S0]		= { 0xa20, BIT(16) },
++	[RST_BUS_I2S1]		= { 0xa20, BIT(17) },
++	[RST_BUS_DMIC]		= { 0xa4c, BIT(16) },
++	[RST_BUS_AUDIO_CODEC]	= { 0xa5c, BIT(16) },
++	[RST_USB_PHY]		= { 0xa70, BIT(30) },
++	[RST_BUS_OHCI]		= { 0xa8c, BIT(16) },
++	[RST_BUS_EHCI]		= { 0xa8c, BIT(20) },
++	[RST_BUS_OTG]		= { 0xa8c, BIT(24) },
++	[RST_BUS_DPSS_TOP]	= { 0xabc, BIT(16) },
++	[RST_BUS_MIPI_DSI]	= { 0xb4c, BIT(16) },
++	[RST_BUS_TCON_LCD]	= { 0xb7c, BIT(16) },
++	[RST_BUS_CSI]		= { 0xc2c, BIT(16) },
++	[RST_BUS_WIEGAND]	= { 0xc7c, BIT(16) },
++	[RST_RISCV_SYS_APB]	= { 0xd04, BIT(2), CCU_FEATURE_KEY_FIELD },
++	[RST_RISCV_SOFT]	= { 0xd04, BIT(1), CCU_FEATURE_KEY_FIELD },
++	[RST_RISCV_CFG]		= { 0xd0c, BIT(16) }
++};
++
++static const struct sunxi_ccu_desc sun8i_v853_ccu_desc = {
++	.ccu_clks	= sun8i_v853_ccu_clks,
++	.num_ccu_clks	= ARRAY_SIZE(sun8i_v853_ccu_clks),
++
++	.hw_clks	= &sun8i_v853_hw_clks,
++
++	.resets		= sun8i_v853_ccu_resets,
++	.num_resets	= ARRAY_SIZE(sun8i_v853_ccu_resets),
++};
++
++static const u32 pll_regs[] = {
++	SUN8I_V853_PLL_CPU_REG,
++	SUN8I_V853_PLL_DDR_REG,
++	SUN8I_V853_PLL_PERIPH_REG,
++	SUN8I_V853_PLL_VIDEO_REG,
++	SUN8I_V853_PLL_CSI_REG,
++	SUN8I_V853_PLL_AUDIO_REG,
++	SUN8I_V853_PLL_NPU_REG,
++};
++
++static int sun8i_v853_ccu_probe(struct platform_device *pdev)
++{
++	void __iomem *reg;
++	u32 val;
++	int i, ret;
++
++	reg = devm_platform_ioremap_resource(pdev, 0);
++	if (IS_ERR(reg))
++		return PTR_ERR(reg);
++
++	/* Enable the enable, LDO, and lock bits on all PLLs. */
++	for (i = 0; i < ARRAY_SIZE(pll_regs); i++) {
++		val = readl(reg + pll_regs[i]);
++		val |= BIT(31) | BIT(30) | BIT(29);
++		writel(val, reg + pll_regs[i]);
++	}
++
++	/* Force PLL_CPU factor M to 0. */
++	val = readl(reg + SUN8I_V853_PLL_CPU_REG);
++	val &= ~GENMASK(1, 0);
++	writel(val, reg + SUN8I_V853_PLL_CPU_REG);
++
++	/*
++	 * Force OHCI 12M clock source to 00 (12MHz divided from 48MHz)
++	 *
++	 * This clock mux is still mysterious, and the code just enforces
++	 * it to have a valid clock parent.
++	 */
++	val = readl(reg + SUN8I_V853_USB_CLK_REG);
++	val &= ~GENMASK(25, 24);
++	writel(val, reg + SUN8I_V853_USB_CLK_REG);
++
++	/* Force fanout-27M factor N to 0. */
++	val = readl(reg + SUN8I_V853_FANOUT_27M_REG);
++	val &= ~GENMASK(9, 8);
++	writel(val, reg + SUN8I_V853_FANOUT_27M_REG);
++
++	ret = devm_sunxi_ccu_probe(&pdev->dev, reg, &sun8i_v853_ccu_desc);
++	if (ret)
++		return ret;
++
++	return 0;
++}
++
++static const struct of_device_id sun8i_v853_ccu_ids[] = {
++	{ .compatible = "allwinner,sun8i-v853-ccu" },
++	{ }
++};
++
++static struct platform_driver sun8i_v853_ccu_driver = {
++	.probe	= sun8i_v853_ccu_probe,
++	.driver	= {
++		.name			= "sun8i-v853-ccu",
++		.suppress_bind_attrs	= true,
++		.of_match_table		= sun8i_v853_ccu_ids,
++	},
++};
++module_platform_driver(sun8i_v853_ccu_driver);
++
++MODULE_IMPORT_NS("SUNXI_CCU");
++MODULE_DESCRIPTION("Support for the Allwinner V853 CCU");
++MODULE_LICENSE("GPL");
+diff -ruN a/drivers/clk/sunxi-ng/ccu-sun8i-v853.h b/drivers/clk/sunxi-ng/ccu-sun8i-v853.h
+--- a/drivers/clk/sunxi-ng/ccu-sun8i-v853.h	1969-12-31 19:00:00
++++ b/drivers/clk/sunxi-ng/ccu-sun8i-v853.h	2026-10-06 22:28:21
+@@ -0,0 +1,14 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/*
++ * Copyright (C) 2024 Andras Szemzo <szemzo.andras@gmail.com>
++ */
++
++#ifndef _CCU_SUN8I_V853_H_
++#define _CCU_SUN8I_V853_H_
++
++#include <dt-bindings/clock/allwinner,sun8i-v853-ccu.h>
++#include <dt-bindings/reset/allwinner,sun8i-v853-ccu.h>
++
++#define CLK_NUMBER		(CLK_FANOUT2 + 1)
++
++#endif
+diff -ruN a/drivers/clk/sunxi-ng/ccu_common.h b/drivers/clk/sunxi-ng/ccu_common.h
+--- a/drivers/clk/sunxi-ng/ccu_common.h	2026-10-06 22:28:21
++++ b/drivers/clk/sunxi-ng/ccu_common.h	2026-10-06 22:28:21
+@@ -28,6 +28,8 @@
+ /* Some clocks need this bit to actually apply register changes */
+ #define CCU_SUNXI_UPDATE_BIT		BIT(27)
+ 
++#define CCU_KEY_VALUE			0x16aa0000
++
+ struct device_node;
+ 
+ struct ccu_common {
+diff -ruN a/drivers/clk/sunxi-ng/ccu_gate.c b/drivers/clk/sunxi-ng/ccu_gate.c
+--- a/drivers/clk/sunxi-ng/ccu_gate.c	2026-10-06 22:28:21
++++ b/drivers/clk/sunxi-ng/ccu_gate.c	2026-10-06 22:28:21
+@@ -20,6 +20,8 @@
+ 	spin_lock_irqsave(common->lock, flags);
+ 
+ 	reg = readl(common->base + common->reg);
++	if (common->features & CCU_FEATURE_KEY_FIELD)
++		reg |= CCU_KEY_VALUE;
+ 	if (common->features & CCU_FEATURE_UPDATE_BIT)
+ 		reg |= CCU_SUNXI_UPDATE_BIT;
+ 	writel(reg & ~gate, common->base + common->reg);
+@@ -46,6 +48,8 @@
+ 	spin_lock_irqsave(common->lock, flags);
+ 
+ 	reg = readl(common->base + common->reg);
++	if (common->features & CCU_FEATURE_KEY_FIELD)
++		reg |= CCU_KEY_VALUE;
+ 	if (common->features & CCU_FEATURE_UPDATE_BIT)
+ 		reg |= CCU_SUNXI_UPDATE_BIT;
+ 	writel(reg | gate, common->base + common->reg);
+diff -ruN a/drivers/clk/sunxi-ng/ccu_gate.h b/drivers/clk/sunxi-ng/ccu_gate.h
+--- a/drivers/clk/sunxi-ng/ccu_gate.h	2026-10-06 22:28:21
++++ b/drivers/clk/sunxi-ng/ccu_gate.h	2026-10-06 22:28:21
+@@ -68,6 +68,20 @@
+ 		}							\
+ 	}
+ 
++#define SUNXI_CCU_GATE_HWS_WITH_KEY(_struct, _name, _parent, _reg,	\
++				       _gate, _flags)			\
++	struct ccu_gate _struct = {					\
++		.enable	= _gate,					\
++		.common	= {						\
++			.reg		= _reg,				\
++			.features	= CCU_FEATURE_KEY_FIELD,	\
++			.hw.init	= CLK_HW_INIT_HWS(_name,	\
++							  _parent,	\
++							  &ccu_gate_ops, \
++							  _flags),	\
++		}							\
++	}
++
+ #define SUNXI_CCU_GATE_HWS_WITH_PREDIV(_struct, _name, _parent, _reg,	\
+ 				       _gate, _prediv, _flags)		\
+ 	struct ccu_gate _struct = {					\
+diff -ruN a/drivers/clk/sunxi-ng/ccu_mux.c b/drivers/clk/sunxi-ng/ccu_mux.c
+--- a/drivers/clk/sunxi-ng/ccu_mux.c	2026-10-06 22:28:21
++++ b/drivers/clk/sunxi-ng/ccu_mux.c	2026-10-06 22:28:21
+@@ -12,8 +12,6 @@
+ #include "ccu_gate.h"
+ #include "ccu_mux.h"
+ 
+-#define CCU_MUX_KEY_VALUE		0x16aa0000
+-
+ static u16 ccu_mux_get_prediv(struct ccu_common *common,
+ 			      struct ccu_mux_internal *cm,
+ 			      int parent_index)
+@@ -206,7 +204,7 @@
+ 
+ 	/* The key field always reads as zero. */
+ 	if (common->features & CCU_FEATURE_KEY_FIELD)
+-		reg |= CCU_MUX_KEY_VALUE;
++		reg |= CCU_KEY_VALUE;
+ 	if (common->features & CCU_FEATURE_UPDATE_BIT)
+ 		reg |= CCU_SUNXI_UPDATE_BIT;
+ 
+diff -ruN a/drivers/clk/sunxi-ng/ccu_reset.c b/drivers/clk/sunxi-ng/ccu_reset.c
+--- a/drivers/clk/sunxi-ng/ccu_reset.c	2026-10-06 22:28:21
++++ b/drivers/clk/sunxi-ng/ccu_reset.c	2026-10-06 22:28:21
+@@ -9,6 +9,7 @@
+ #include <linux/reset-controller.h>
+ 
+ #include "ccu_reset.h"
++#include "ccu_common.h"
+ 
+ static int ccu_reset_assert(struct reset_controller_dev *rcdev,
+ 			    unsigned long id)
+@@ -21,6 +22,9 @@
+ 	spin_lock_irqsave(ccu->lock, flags);
+ 
+ 	reg = readl(ccu->base + map->reg);
++	if (map->features & CCU_FEATURE_KEY_FIELD)
++		reg |= CCU_KEY_VALUE;
++
+ 	writel(reg & ~map->bit, ccu->base + map->reg);
+ 
+ 	spin_unlock_irqrestore(ccu->lock, flags);
+@@ -39,6 +43,9 @@
+ 	spin_lock_irqsave(ccu->lock, flags);
+ 
+ 	reg = readl(ccu->base + map->reg);
++	if (map->features & CCU_FEATURE_KEY_FIELD)
++		reg |= CCU_KEY_VALUE;
++
+ 	writel(reg | map->bit, ccu->base + map->reg);
+ 
+ 	spin_unlock_irqrestore(ccu->lock, flags);
+diff -ruN a/drivers/clk/sunxi-ng/ccu_reset.h b/drivers/clk/sunxi-ng/ccu_reset.h
+--- a/drivers/clk/sunxi-ng/ccu_reset.h	2026-10-06 22:28:21
++++ b/drivers/clk/sunxi-ng/ccu_reset.h	2026-10-06 22:28:21
+@@ -12,8 +12,8 @@
+ struct ccu_reset_map {
+ 	u16	reg;
+ 	u32	bit;
++	u32	features;
+ };
+-
+ 
+ struct ccu_reset {
+ 	void __iomem			*base;
+diff -ruN a/drivers/phy/allwinner/phy-sun4i-usb.c b/drivers/phy/allwinner/phy-sun4i-usb.c
+--- a/drivers/phy/allwinner/phy-sun4i-usb.c	2026-10-06 22:28:21
++++ b/drivers/phy/allwinner/phy-sun4i-usb.c	2026-10-06 22:28:21
+@@ -1261,6 +1261,14 @@
+ 	.phy0_dual_route = true,
+ };
+ 
++static const struct sun4i_usb_phy_cfg sun8i_v853_cfg = {
++	.phyctl_offset = REG_PHYCTL_A33,
++	.dedicated_clocks = true,
++	.hci_phy_ctl_clear = PHY_CTL_SIDDQ,
++	.phy0_dual_route = true,
++	.siddq_in_base = true,
++};
++
+ static const struct sun4i_usb_phy_cfg sun50i_h6_cfg = {
+ 	.phyctl_offset = REG_PHYCTL_A33,
+ 	.dedicated_clocks = true,
+@@ -1296,6 +1304,7 @@
+ 	  .data = &sun50i_a64_cfg},
+ 	{ .compatible = "allwinner,sun50i-h6-usb-phy", .data = &sun50i_h6_cfg },
+ 	{ .compatible = "allwinner,sun50i-h616-usb-phy", .data = &sun50i_h616_cfg },
++	{ .compatible = "allwinner,sun8i-v853-usb-phy", .data = &sun8i_v853_cfg },
+ 	{ .compatible = "allwinner,suniv-f1c100s-usb-phy",
+ 	  .data = &suniv_f1c100s_cfg },
+ 	{ },
+diff -ruN a/drivers/pinctrl/sunxi/Kconfig b/drivers/pinctrl/sunxi/Kconfig
+--- a/drivers/pinctrl/sunxi/Kconfig	2026-10-06 22:28:21
++++ b/drivers/pinctrl/sunxi/Kconfig	2026-10-06 22:28:21
+@@ -81,6 +81,11 @@
+ 	default MACH_SUN9I
+ 	select PINCTRL_SUNXI
+ 
++config PINCTRL_SUN8I_V853
++	bool "Support for the Allwinner V853/V851S/V851SE PIO"
++	default MACH_SUN8I
++	select PINCTRL_SUNXI
++
+ config PINCTRL_SUN20I_D1
+ 	bool "Support for the Allwinner D1 PIO"
+ 	default MACH_SUN8I || (RISCV && ARCH_SUNXI)
+diff -ruN a/drivers/pinctrl/sunxi/Makefile b/drivers/pinctrl/sunxi/Makefile
+--- a/drivers/pinctrl/sunxi/Makefile	2026-10-06 22:28:21
++++ b/drivers/pinctrl/sunxi/Makefile	2026-10-06 22:28:21
+@@ -21,6 +21,7 @@
+ obj-$(CONFIG_PINCTRL_SUN8I_H3)		+= pinctrl-sun8i-h3.o
+ obj-$(CONFIG_PINCTRL_SUN8I_H3_R)	+= pinctrl-sun8i-h3-r.o
+ obj-$(CONFIG_PINCTRL_SUN8I_V3S)		+= pinctrl-sun8i-v3s.o
++obj-$(CONFIG_PINCTRL_SUN8I_V853)	+= pinctrl-sun8i-v853.o
+ obj-$(CONFIG_PINCTRL_SUN20I_D1)		+= pinctrl-sun20i-d1.o
+ obj-$(CONFIG_PINCTRL_SUN50I_H5)		+= pinctrl-sun50i-h5.o
+ obj-$(CONFIG_PINCTRL_SUN50I_H6)		+= pinctrl-sun50i-h6.o
+diff -ruN a/drivers/pinctrl/sunxi/pinctrl-sun8i-v853.c b/drivers/pinctrl/sunxi/pinctrl-sun8i-v853.c
+--- a/drivers/pinctrl/sunxi/pinctrl-sun8i-v853.c	1969-12-31 19:00:00
++++ b/drivers/pinctrl/sunxi/pinctrl-sun8i-v853.c	2026-10-06 22:28:21
+@@ -0,0 +1,53 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Allwinner V853 SoC pinctrl driver.
++ *
++ * Copyright (c) 2025 Andras Szemzo <szemzo.andras@gmail.com>
++ */
++
++#include <linux/module.h>
++#include <linux/platform_device.h>
++#include <linux/of.h>
++#include <linux/of_device.h>
++#include <linux/pinctrl/pinctrl.h>
++
++#include "pinctrl-sunxi.h"
++
++static const u8 v853_nr_bank_pins[SUNXI_PINCTRL_MAX_BANKS] =
++/*	  PA  PB  PC  PD  PE  PF  PG  PH  PI  */
++	{ 22,  0, 12, 23, 18,  7,  8, 16,  5 };
++
++static const unsigned int v853_irq_bank_map[] = { 0, 2, 3, 4, 5, 6, 7, 8 };
++
++static const u8 v853_irq_bank_muxes[SUNXI_PINCTRL_MAX_BANKS] =
++/*	  PA  PB  PC  PD  PE  PF  PG  PH  PI */
++	{ 14,  0, 14, 14, 14, 14, 14, 14, 14 };
++
++static struct sunxi_pinctrl_desc v853_pinctrl_data = {
++	.irq_banks = ARRAY_SIZE(v853_irq_bank_map),
++	.irq_bank_map = v853_irq_bank_map,
++	.io_bias_cfg_variant = BIAS_VOLTAGE_PIO_POW_MODE_SEL,
++};
++
++static int v853_pinctrl_probe(struct platform_device *pdev)
++{
++	return sunxi_pinctrl_dt_table_init(pdev, v853_nr_bank_pins,
++					   v853_irq_bank_muxes,
++					   &v853_pinctrl_data,
++					   SUNXI_PINCTRL_NEW_REG_LAYOUT |
++					   SUNXI_PINCTRL_ELEVEN_BANKS);
++}
++
++static const struct of_device_id v853_pinctrl_match[] = {
++	{ .compatible = "allwinner,sun8i-v853-pinctrl", },
++	{}
++};
++
++static struct platform_driver v853_pinctrl_driver = {
++	.probe	= v853_pinctrl_probe,
++	.driver	= {
++		.name		= "sun8i-v853-pinctrl",
++		.of_match_table	= v853_pinctrl_match,
++	},
++};
++builtin_platform_driver(v853_pinctrl_driver);
+diff -ruN a/include/dt-bindings/clock/allwinner,sun8i-v853-ccu.h b/include/dt-bindings/clock/allwinner,sun8i-v853-ccu.h
+--- a/include/dt-bindings/clock/allwinner,sun8i-v853-ccu.h	1969-12-31 19:00:00
++++ b/include/dt-bindings/clock/allwinner,sun8i-v853-ccu.h	2026-10-06 22:28:21
+@@ -0,0 +1,132 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/*
++ * Copyright (C) 2024 Andras Szemzo <szemzo.andras@gmail.com.com>
++ */
++
++#ifndef _DT_BINDINGS_CLK_ALLWINNER_SUN8I_V85X_CCU_H_
++#define _DT_BINDINGS_CLK_ALLWINNER_SUN8I_V85X_CCU_H_
++
++#define CLK_OSC12M		0
++#define CLK_PLL_CPU		1
++#define CLK_PLL_DDR		2
++#define CLK_PLL_PERIPH_4X	3
++#define CLK_PLL_PERIPH_2X	4
++#define CLK_PLL_PERIPH_800M	5
++#define CLK_PLL_PERIPH_480M	6
++#define CLK_PLL_PERIPH_600M	7
++#define CLK_PLL_PERIPH_400M	8
++#define CLK_PLL_PERIPH_300M	9
++#define CLK_PLL_PERIPH_200M	10
++#define CLK_PLL_PERIPH_160M	11
++#define CLK_PLL_PERIPH_150M	12
++#define CLK_PLL_VIDEO_4X	13
++#define CLK_PLL_VIDEO_2X	14
++#define CLK_PLL_VIDEO_1X	15
++#define CLK_PLL_CSI_4X		16
++#define CLK_PLL_AUDIO_DIV2	17
++#define CLK_PLL_AUDIO_DIV5	18
++#define CLK_PLL_AUDIO_4X	19
++#define CLK_PLL_AUDIO_1X	20
++#define CLK_PLL_NPU_4X		21
++#define CLK_CPU			22
++#define CLK_CPU_AXI		23
++#define CLK_CPU_APB		24
++#define CLK_AHB			25
++#define CLK_APB0		26
++#define CLK_APB1		27
++#define CLK_MBUS		28
++#define CLK_DE			29
++#define CLK_BUS_DE		30
++#define CLK_G2D			31
++#define CLK_BUS_G2D		32
++#define CLK_CE			33
++#define CLK_BUS_CE		34
++#define CLK_VE			35
++#define CLK_BUS_VE		36
++#define CLK_NPU			37
++#define CLK_BUS_NPU		38
++#define CLK_BUS_DMA		39
++#define CLK_BUS_MSGBOX0		40
++#define CLK_BUS_MSGBOX1		41
++#define CLK_BUS_SPINLOCK	42
++#define CLK_BUS_HSTIMER		43
++#define CLK_AVS			44
++#define CLK_BUS_DBG		45
++#define CLK_BUS_PWM		46
++#define CLK_BUS_IOMMU		47
++#define CLK_DRAM		48
++#define CLK_MBUS_DMA		49
++#define CLK_MBUS_VE		50
++#define CLK_MBUS_CE		51
++#define CLK_MBUS_CSI		52
++#define CLK_MBUS_ISP		53
++#define CLK_MBUS_G2D		54
++#define CLK_BUS_DRAM		55
++#define CLK_MMC0		56
++#define CLK_MMC1		57
++#define CLK_MMC2		58
++#define CLK_BUS_MMC0		59
++#define CLK_BUS_MMC1		60
++#define CLK_BUS_MMC2		61
++#define CLK_BUS_UART0		62
++#define CLK_BUS_UART1		63
++#define CLK_BUS_UART2		64
++#define CLK_BUS_UART3		65
++#define CLK_BUS_I2C0		66
++#define CLK_BUS_I2C1		67
++#define CLK_BUS_I2C2		68
++#define CLK_BUS_I2C3		69
++#define CLK_BUS_I2C4		70
++#define CLK_SPI0		71
++#define CLK_SPI1		72
++#define CLK_SPI2		73
++#define CLK_SPI3		74
++#define CLK_BUS_SPI0		75
++#define CLK_BUS_SPI1		76
++#define CLK_BUS_SPI2		77
++#define CLK_BUS_SPI3		78
++#define CLK_SPIF		79
++#define CLK_BUS_SPIF		80
++#define CLK_EMAC_25M		81
++#define CLK_BUS_EMAC		82
++#define CLK_BUS_GPADC		83
++#define CLK_BUS_THS		84
++#define CLK_I2S0		85
++#define CLK_I2S1		86
++#define CLK_BUS_I2S0		87
++#define CLK_BUS_I2S1		88
++#define CLK_DMIC		89
++#define CLK_BUS_DMIC		90
++#define CLK_AUDIO_CODEC_DAC	91
++#define CLK_AUDIO_CODEC_ADC	92
++#define CLK_BUS_AUDIO_CODEC	93
++#define CLK_USB_OHCI		94
++#define CLK_BUS_OHCI		95
++#define CLK_BUS_EHCI		96
++#define CLK_BUS_OTG		97
++#define CLK_BUS_DPSS_TOP	98
++#define CLK_MIPI_DSI		99
++#define CLK_BUS_MIPI_DSI	100
++#define CLK_TCON_LCD		101
++#define CLK_BUS_TCON_LCD	102
++#define CLK_CSI_TOP		103
++#define CLK_CSI_MCLK0		104
++#define CLK_CSI_MCLK1		105
++#define CLK_CSI_MCLK2		106
++#define CLK_BUS_CSI		107
++#define CLK_BUS_WIEGAND		108
++#define CLK_RISCV		109
++#define CLK_RISCV_AXI		110
++#define CLK_RISCV_CORE_GATE	111
++#define CLK_RISCV_CFG_GATE	112
++#define CLK_FANOUT_24M		113
++#define CLK_FANOUT_12M		114
++#define CLK_FANOUT_16M		115
++#define CLK_FANOUT_25M		116
++#define CLK_FANOUT_27M		117
++#define CLK_FANOUT_PCLK		118
++#define CLK_FANOUT0		119
++#define CLK_FANOUT1		120
++#define CLK_FANOUT2		121
++
++#endif
+diff -ruN a/include/dt-bindings/clock/allwinner,sun8i-v853-r-ccu.h b/include/dt-bindings/clock/allwinner,sun8i-v853-r-ccu.h
+--- a/include/dt-bindings/clock/allwinner,sun8i-v853-r-ccu.h	1969-12-31 19:00:00
++++ b/include/dt-bindings/clock/allwinner,sun8i-v853-r-ccu.h	2026-10-06 22:28:21
+@@ -0,0 +1,16 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/*
++ * Copyright (C) 2025 Andras Szemzo <szemzo.andras@gmail.com>
++ */
++
++#ifndef _DT_BINDINGS_CLK_ALLWINNER_SUN8I_V853_R_CCU_H_
++#define _DT_BINDINGS_CLK_ALLWINNER_SUN8I_V853_R_CCU_H_
++
++#define CLK_R_AHB		0
++#define CLK_R_APB0		1
++#define CLK_BUS_R_TWD		2
++#define CLK_BUS_R_PPU		3
++#define CLK_BUS_R_RTC		4
++#define CLK_BUS_R_CPUCFG	5
++
++#endif
+diff -ruN a/include/dt-bindings/reset/allwinner,sun8i-v853-ccu.h b/include/dt-bindings/reset/allwinner,sun8i-v853-ccu.h
+--- a/include/dt-bindings/reset/allwinner,sun8i-v853-ccu.h	1969-12-31 19:00:00
++++ b/include/dt-bindings/reset/allwinner,sun8i-v853-ccu.h	2026-10-06 22:28:21
+@@ -0,0 +1,60 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/*
++ * Copyright (C) 2024 Andras Szemzo <szemzo.andras@gmail.com>
++ */
++
++#ifndef _DT_BINDINGS_RST_ALLWINNER_SUN8I_V85X_CCU_H_
++#define _DT_BINDINGS_RST_ALLWINNER_SUN8I_V85X_CCU_H_
++
++#define RST_MBUS		0
++#define RST_BUS_DE		1
++#define RST_BUS_G2D		2
++#define RST_BUS_CE		3
++#define RST_BUS_VE		4
++#define RST_BUS_NPU		5
++#define RST_BUS_DMA		6
++#define RST_BUS_MSGBOX0		7
++#define RST_BUS_MSGBOX1		8
++#define RST_BUS_SPINLOCK	9
++#define RST_BUS_HSTIMER		10
++#define RST_BUS_DBG		11
++#define RST_BUS_PWM		12
++#define RST_BUS_DRAM		13
++#define RST_BUS_MMC0		14
++#define RST_BUS_MMC1		15
++#define RST_BUS_MMC2		16
++#define RST_BUS_UART0		17
++#define RST_BUS_UART1		18
++#define RST_BUS_UART2		19
++#define RST_BUS_UART3		20
++#define RST_BUS_I2C0		21
++#define RST_BUS_I2C1		22
++#define RST_BUS_I2C2		23
++#define RST_BUS_I2C3		24
++#define RST_BUS_I2C4		25
++#define RST_BUS_SPI0		26
++#define RST_BUS_SPI1		27
++#define RST_BUS_SPI2		28
++#define RST_BUS_SPI3		29
++#define RST_BUS_SPIF		30
++#define RST_BUS_EMAC		31
++#define RST_BUS_GPADC		32
++#define RST_BUS_THS		33
++#define RST_BUS_I2S0		34
++#define RST_BUS_I2S1		35
++#define RST_BUS_DMIC		36
++#define RST_BUS_AUDIO_CODEC	37
++#define RST_USB_PHY		38
++#define RST_BUS_OHCI		39
++#define RST_BUS_EHCI		40
++#define RST_BUS_OTG		41
++#define RST_BUS_DPSS_TOP	42
++#define RST_BUS_MIPI_DSI	43
++#define RST_BUS_TCON_LCD	44
++#define RST_BUS_CSI		45
++#define RST_BUS_WIEGAND		46
++#define RST_RISCV_SYS_APB	47
++#define RST_RISCV_SOFT		48
++#define RST_RISCV_CFG		49
++
++#endif
+diff -ruN a/include/dt-bindings/reset/allwinner,sun8i-v853-r-ccu.h b/include/dt-bindings/reset/allwinner,sun8i-v853-r-ccu.h
+--- a/include/dt-bindings/reset/allwinner,sun8i-v853-r-ccu.h	1969-12-31 19:00:00
++++ b/include/dt-bindings/reset/allwinner,sun8i-v853-r-ccu.h	2026-10-06 22:28:21
+@@ -0,0 +1,14 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/*
++ * Copyright (C) 2025 Andras Szemzo <szemzo.andras@gmail.com>
++ */
++
++#ifndef _DT_BINDINGS_RST_ALLWINNER_SUN8I_V853_R_CCU_H_
++#define _DT_BINDINGS_RST_ALLWINNER_SUN8I_V853_R_CCU_H_
++
++#define RST_BUS_R_TWD		0
++#define RST_BUS_R_PPU		1
++#define RST_BUS_R_RTC		2
++#define RST_BUS_R_CPUCFG	3
++
++#endif

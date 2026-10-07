@@ -1,0 +1,162 @@
+#!/bin/sh
+# U5A init (PID 1, kernel cmdline init=/sbin/u5a-init). Root is the EROFS image u5a-loader copied from NOR
+# into RAM (read-only). Writes go to tmpfs, except /persist: JFFS2 on the NOR "persist" partition (the only
+# writable part of the flash; the DT marks the rest read-only). Mode from the kernel cmdline:
+#   u5a.mode=bench (default): ACM shell + usb0 debug gadget, catplay car-side gadget off (E28 behaviour)
+#   u5a.mode=car:             USB port belongs to the head unit (g_iphone + catplay gadget), debug over Wi-Fi
+# Order follows upstream carlinkit_otalib boot_early(): lo, sysctls, dbus, modules, wlan0 + hostapd,
+# bluetoothd, catplay. Debug channel as in E26: ACM shell on ttyGS0 + usb0 10.77.0.1 (dropbear, udhcpd).
+# The car-side gadget is disabled in catplay.conf so the ACM/NCM debug gadget keeps the USB port.
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+KREL=$(uname -r)
+MODE=bench
+M=/lib/modules/$KREL/extra
+LOG=/run/u5a/boot.log
+
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+# u5a-loader (NOR boot) sets the Boot0 FEL flag so that a failed boot ends in FEL; Linux is up, clear it.
+devmem 0x07090108 32 0
+for a in $(cat /proc/cmdline); do case "$a" in u5a.mode=*) MODE=${a#u5a.mode=} ;; esac; done
+# The loader arms a 16 s reset watchdog for a kernel that never comes up. In the car no USB host will
+# configure a debug gadget, so disarm it right here; the bench mode keeps the old "disarm once USB is up".
+[ "$MODE" = car ] && devmem 0x020500b8 32 0x16aa0000
+mount -t devtmpfs devtmpfs /dev
+mkdir -p /dev/pts && mount -t devpts devpts /dev/pts
+mount -t tmpfs -o mode=0755,size=4m tmpfs /run
+mount -t tmpfs -o size=8m tmpfs /tmp
+mount -t configfs configfs /sys/kernel/config
+mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null
+# Writable /etc and /var over the read-only root; /persist is tmpfs on the bench.
+for d in etc var; do
+    mkdir -p /run/ovl/$d/up /run/ovl/$d/work
+    mount -t overlay overlay -o lowerdir=/$d,upperdir=/run/ovl/$d/up,workdir=/run/ovl/$d/work /$d
+done
+mkdir -p /run/u5a /var/volatile/log /var/volatile/tmp /var/lib/bluetooth /var/run/dbus
+exec >>"$LOG" 2>&1
+k() { echo "U5A: $*" > /dev/kmsg; echo "[$(cut -d' ' -f1 /proc/uptime)] $*"; }
+k "init started on $KREL, mode $MODE, root $(grep ' / ' /proc/mounts)"
+if mount -t jffs2 mtd:persist /persist; then PERSIST=jffs2; else mount -t tmpfs -o size=2m tmpfs /persist; PERSIST=tmpfs; fi
+mkdir -p /persist/bluetooth /persist/log
+mount --bind /persist/bluetooth /var/lib/bluetooth
+BOOTN=$(( $(cat /persist/bootcount 2>/dev/null || echo 0) + 1 )); echo $BOOTN > /persist/bootcount
+# Escape hatch without the pads: three boots in a row that each end within 20 s (plug in, wait ~5 s, unplug,
+# twice; plug in a third time) send the box to FEL. The counter is cleared once a boot lasts 20 s.
+QUICK=$(( $(cat /persist/quickboots 2>/dev/null || echo 0) + 1 ))
+if [ $PERSIST = jffs2 ] && [ $QUICK -ge 3 ]; then
+    echo 0 > /persist/quickboots; sync
+    k "three quick boots in a row: entering FEL"
+    devmem 0x07090108 32 0x5aa5a55a; devmem 0x020500a8 32 0x16aa0001
+fi
+echo $QUICK > /persist/quickboots; sync
+( sleep 20; echo 0 > /persist/quickboots; sync ) &
+k "persist: $PERSIST ($(df -k /persist | awk 'NR==2{print $3"/"$2" kB used"}')), boot #$BOOTN"
+
+if [ "$MODE" = bench ]; then
+# --- debug gadget (same identity scheme as E26) ---
+G=/sys/kernel/config/usb_gadget/u5a
+mkdir -p $G/strings/0x409 $G/configs/c.1/strings/0x409 $G/functions/acm.usb0 $G/functions/ncm.usb0
+echo 0x1d6b > $G/idVendor; echo 0x0104 > $G/idProduct
+echo 0xef > $G/bDeviceClass; echo 0x02 > $G/bDeviceSubClass; echo 0x01 > $G/bDeviceProtocol
+echo U5A-720-CATPLAY-E28 > $G/strings/0x409/serialnumber
+echo CatPlay > $G/strings/0x409/manufacturer
+echo "U5A RAM CatPlay E28" > $G/strings/0x409/product
+echo "ACM and CDC-NCM debug" > $G/configs/c.1/strings/0x409/configuration
+echo 'usb%d' > $G/functions/ncm.usb0/ifname
+echo 02:1a:85:10:00:01 > $G/functions/ncm.usb0/dev_addr
+echo 02:1a:85:10:00:02 > $G/functions/ncm.usb0/host_addr
+ln -s $G/functions/acm.usb0 $G/configs/c.1/
+ln -s $G/functions/ncm.usb0 $G/configs/c.1/
+while [ -z "$(ls /sys/class/udc 2>/dev/null)" ]; do sleep 1; done
+UDC=$(ls /sys/class/udc | head -n 1); echo "$UDC" > $G/UDC
+k "debug gadget bound to $UDC"
+
+(
+    while ! grep -q configured /sys/class/udc/*/state 2>/dev/null; do sleep 1; done
+    devmem 0x020500b8 32 0x16aa0000    # known-good NCM setup, inherited from network-v1 (E20-E26)
+    ip addr add 10.77.0.1/24 dev usb0; ip link set usb0 up
+    udhcpd /etc/u5a/udhcpd-usb.conf
+    dropbear -R -B -E -p 10.77.0.1:22
+    k "usb0 up, dropbear on 10.77.0.1:22"
+) &
+fi
+
+# --- 1) lo and sysctls (boot_params_v821) ---
+ip addr add 127.0.0.1/8 dev lo; ip addr add ::1/128 dev lo; ip link set lo up
+while read -r key val; do sysctl -q -w "$key=$val"; done <<'SYSCTL'
+net.core.netdev_max_backlog 512
+net.ipv4.tcp_moderate_rcvbuf 1
+net.ipv4.tcp_low_latency 1
+net.ipv4.tcp_max_orphans 256
+net.ipv4.tcp_tw_reuse 1
+vm.watermark_boost_factor 0
+vm.watermark_scale_factor 10
+vm.min_free_kbytes 2048
+vm.swappiness 10
+vm.vfs_cache_pressure 500
+vm.page-cluster 0
+vm.dirty_expire_centisecs 100
+vm.dirty_writeback_centisecs 100
+SYSCTL
+
+# --- 2) dbus ---
+dbus-uuidgen --ensure
+dbus-daemon --system --fork && k "dbus up" || k "dbus FAILED"
+
+# --- 3) radios: BT (E25) and Wi-Fi (E22, E27) ---
+for m in crc-ccitt btrtl hci_uart; do insmod $M/$m.ko || k "insmod $m FAILED"; done
+insmod $M/8733bs.ko rtw_country_code=CA || k "insmod 8733bs FAILED"
+i=0; while [ ! -e /sys/class/net/wlan0 ] && [ $i -lt 20 ]; do sleep 1; i=$((i+1)); done
+echo 1 > /proc/sys/net/ipv6/conf/wlan0/addr_gen_mode
+echo 0 > /proc/sys/net/ipv6/conf/wlan0/accept_dad
+ip addr add 192.168.50.2/24 dev wlan0
+ip -6 addr add fe80::1234:5678:9abc:def4/64 dev wlan0
+ip link set wlan0 up
+u5a-settings render $MODE    # hostapd.conf, catplay.conf and the preferred phone from /persist/settings.conf
+hostapd -B -P /run/hostapd.pid -f /run/u5a/hostapd.log /run/u5a/hostapd.conf && k "hostapd up ($(u5a-settings get WIFI_SSID))" || k "hostapd FAILED"
+touch /run/udhcpd.wifi.leases; udhcpd /etc/u5a/udhcpd-wifi.conf
+# busybox httpd in daemon mode never listened here; run it in the foreground, backgrounded
+httpd -f -p 80 -h /www > /dev/null 2>&1 &
+k "settings page on http://192.168.50.2/index.html"
+[ "$MODE" = car ] && dropbear -R -B -E -p 192.168.50.2:22 && k "car mode debug: dropbear on 192.168.50.2:22 (box Wi-Fi)"
+i=0; while [ ! -e /sys/class/bluetooth/hci0 ] && [ $i -lt 20 ]; do sleep 1; i=$((i+1)); done
+/usr/libexec/bluetooth/bluetoothd -f /etc/u5a/bluetooth-main.conf -n > /run/u5a/bluetoothd.log 2>&1 &
+k "bluetoothd started (hci0 $( [ -e /sys/class/bluetooth/hci0 ] && echo present || echo MISSING ))"
+
+# --- 4) catplay: bench keeps the car-side gadget off; car loads g_iphone (E26) and turns it on ---
+if [ "$MODE" = car ]; then
+    for m in iap2_char iap2_scan; do insmod $M/$m.ko || k "insmod $m FAILED"; done
+    insmod $M/g_iphone.ko udc_name=musb-hdrc.2.auto device_name=default role_switch_name=4100000.usb || k "insmod g_iphone FAILED"
+fi
+# /etc/catplay/catplay.conf was rendered by u5a-settings above
+u5a-catplay-run &      # supervised (restarted if it exits); log filtered and capped (RAM), see the script
+k "catplay started pid $!"
+(   # snapshots (u5a-snapshot): every 30 s for the first 10 min, when most tests happen, then every 5 min.
+    # Each is about 350 KiB of text, JFFS2-compressed to well under 100 KiB.
+    t0=$(cut -d. -f1 /proc/uptime)
+    for t in 10 20 30 45 60 90 120 150 180 210 240 270 300 330 360 390 420 450 480 510 540 570 600; do
+        while [ $(( $(cut -d. -f1 /proc/uptime) - t0 )) -lt $t ]; do sleep 1; done
+        u5a-snapshot snap
+    done
+    while true; do sleep 300; u5a-snapshot snap; done
+) &
+(   # and 3 s after the car connects or drops the USB link (role change), to catch what happened around it
+    last=$(cat /sys/class/usb_role/*/role 2>/dev/null)
+    while true; do
+        sleep 2
+        now=$(cat /sys/class/usb_role/*/role 2>/dev/null)
+        [ "$now" = "$last" ] && continue
+        k "usb role $last -> $now"; last=$now
+        sleep 3; u5a-snapshot usb "role $now"
+    done
+) &
+k "ready; free: $(free -k | awk '/Mem:/{print $4" kB free, "$7" kB avail"}')"
+
+# --- ACM shell (bench), or just stay alive (car) ---
+[ "$MODE" = car ] && while true; do sleep 3600; done
+while [ ! -c /dev/ttyGS0 ]; do sleep 1; done
+while true; do
+    printf '\r\nU5A_SHELL ready\r\n' > /dev/ttyGS0
+    setsid cttyhack sh -i < /dev/ttyGS0 > /dev/ttyGS0 2>&1
+    sleep 1
+done

@@ -1,0 +1,150 @@
+Date: Thu, 6 Aug 2026 12:36:40 +0200
+Subject: [PATCH 1/4] usb: musb: sunxi: support optional clocks and resets
+
+Some newer sunxi MUSB integrations expose separate AHB and MBUS clocks
+as well as OTG and shared USB reset lines. Acquire these resources through
+the optional clock and reset APIs and sequence them around the existing
+controller resources.
+
+The reset API deliberately accepts NULL handles returned for absent
+optional resets, so keep the enable and unwind paths linear.
+
+Upstream-Status: Pending
+---
+ drivers/usb/musb/sunxi.c | 64 ++++++++++++++++++++++++++++++++++++----
+ 1 file changed, 59 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/usb/musb/sunxi.c b/drivers/usb/musb/sunxi.c
+index a6bd3e9..7e91b9c 100644
+--- a/drivers/usb/musb/sunxi.c
++++ b/drivers/usb/musb/sunxi.c
+@@ -82,7 +82,11 @@ struct sunxi_glue {
+ 	struct musb		*musb;
+ 	struct platform_device	*musb_pdev;
+ 	struct clk		*clk;
++	struct clk		*clk_ahb;
++	struct clk		*clk_mbus;
+ 	struct reset_control	*rst;
++	struct reset_control	*rst_otg;
++	struct reset_control	*rst_usb;
+ 	struct phy		*phy;
+ 	struct platform_device	*usb_phy;
+ 	struct usb_phy		*xceiv;
+@@ -238,23 +242,42 @@ static int sunxi_musb_init(struct musb *musb)
+ 	if (ret)
+ 		goto error_sram_release;
+ 
++	ret = clk_prepare_enable(glue->clk_ahb);
++	if (ret)
++		goto error_clk_disable;
++
++	ret = clk_prepare_enable(glue->clk_mbus);
++	if (ret)
++		goto error_ahb_clk_disable;
++
+ 	if (test_bit(SUNXI_MUSB_FL_HAS_RESET, &glue->flags)) {
+ 		ret = reset_control_deassert(glue->rst);
+ 		if (ret)
+-			goto error_clk_disable;
++			goto error_mbus_clk_disable;
++	}
++
++	ret = reset_control_deassert(glue->rst_otg);
++	if (ret) {
++		if (test_bit(SUNXI_MUSB_FL_HAS_RESET, &glue->flags))
++			reset_control_assert(glue->rst);
++		goto error_mbus_clk_disable;
+ 	}
+ 
++	ret = reset_control_deassert(glue->rst_usb);
++	if (ret)
++		goto error_otg_reset_assert;
++
+ 	writeb(SUNXI_MUSB_VEND0_PIO_MODE, musb->mregs + SUNXI_MUSB_VEND0);
+ 
+ 	/* Register notifier before calling phy_init() */
+ 	ret = devm_extcon_register_notifier(glue->dev, glue->extcon,
+ 					EXTCON_USB_HOST, &glue->host_nb);
+ 	if (ret)
+-		goto error_reset_assert;
++		goto error_usb_reset_assert;
+ 
+ 	ret = phy_init(glue->phy);
+ 	if (ret)
+-		goto error_reset_assert;
++		goto error_usb_reset_assert;
+ 
+ 	musb->isr = sunxi_musb_interrupt;
+ 
+@@ -263,9 +286,16 @@ static int sunxi_musb_init(struct musb *musb)
+ 
+ 	return 0;
+ 
+-error_reset_assert:
++error_usb_reset_assert:
++	reset_control_assert(glue->rst_usb);
++error_otg_reset_assert:
++	reset_control_assert(glue->rst_otg);
+ 	if (test_bit(SUNXI_MUSB_FL_HAS_RESET, &glue->flags))
+ 		reset_control_assert(glue->rst);
++error_mbus_clk_disable:
++	clk_disable_unprepare(glue->clk_mbus);
++error_ahb_clk_disable:
++	clk_disable_unprepare(glue->clk_ahb);
+ error_clk_disable:
+ 	clk_disable_unprepare(glue->clk);
+ error_sram_release:
+@@ -286,9 +316,13 @@ static int sunxi_musb_exit(struct musb *musb)
+ 
+ 	phy_exit(glue->phy);
+ 
++	reset_control_assert(glue->rst_usb);
++	reset_control_assert(glue->rst_otg);
+ 	if (test_bit(SUNXI_MUSB_FL_HAS_RESET, &glue->flags))
+ 		reset_control_assert(glue->rst);
+ 
++	clk_disable_unprepare(glue->clk_mbus);
++	clk_disable_unprepare(glue->clk_ahb);
+ 	clk_disable_unprepare(glue->clk);
+ 	if (test_bit(SUNXI_MUSB_FL_HAS_SRAM, &glue->flags))
+ 		sunxi_sram_release(musb->controller->parent);
+@@ -744,6 +778,15 @@ static int sunxi_musb_probe(struct platform_device *pdev)
+ 		return PTR_ERR(glue->clk);
+ 	}
+ 
++	glue->clk_ahb = devm_clk_get_optional(&pdev->dev, "ahb");
++	if (IS_ERR(glue->clk_ahb))
++		return dev_err_probe(&pdev->dev, PTR_ERR(glue->clk_ahb),
++				     "Error getting ahb clock\n");
++
++	glue->clk_mbus = devm_clk_get_optional(&pdev->dev, "mbus");
++	if (IS_ERR(glue->clk_mbus))
++		return dev_err_probe(&pdev->dev, PTR_ERR(glue->clk_mbus),
++				     "Error getting mbus clock\n");
+ 	if (test_bit(SUNXI_MUSB_FL_HAS_RESET, &glue->flags)) {
+ 		glue->rst = devm_reset_control_get(&pdev->dev, NULL);
+ 		if (IS_ERR(glue->rst))
+@@ -751,11 +794,22 @@ static int sunxi_musb_probe(struct platform_device *pdev)
+ 					     "Error getting reset\n");
+ 	}
+ 
++	glue->rst_otg = devm_reset_control_get_optional_exclusive(&pdev->dev,
++								  "otg");
++	if (IS_ERR(glue->rst_otg))
++		return dev_err_probe(&pdev->dev, PTR_ERR(glue->rst_otg),
++				     "Error getting otg reset\n");
++
++	glue->rst_usb = devm_reset_control_get_optional_shared(&pdev->dev,
++							       "usb_rst");
++	if (IS_ERR(glue->rst_usb))
++		return dev_err_probe(&pdev->dev, PTR_ERR(glue->rst_usb),
++				     "Error getting usb reset\n");
++
+ 	glue->extcon = extcon_get_edev_by_phandle(&pdev->dev, 0);
+ 	if (IS_ERR(glue->extcon))
+ 		return dev_err_probe(&pdev->dev, PTR_ERR(glue->extcon),
+ 				     "Invalid or missing extcon\n");
+-
+ 	glue->phy = devm_phy_get(&pdev->dev, "usb");
+ 	if (IS_ERR(glue->phy))
+ 		return dev_err_probe(&pdev->dev, PTR_ERR(glue->phy),

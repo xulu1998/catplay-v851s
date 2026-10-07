@@ -1,0 +1,75 @@
+Date: Fri, 7 Aug 2026 12:36:40 +0200
+Subject: [PATCH 2/4] usb: musb: sunxi: add V821 platform support
+
+Add the V821 MUSB configuration. The controller exposes five endpoints
+and does not provide the standard CONFIGDATA register.
+
+V821 describes the controller as a fixed peripheral and uses a USB role
+switch instead of extcon. Do not require an extcon provider in fixed
+peripheral mode; the extcon notifier is only useful when the MUSB instance
+can act as a host.
+
+Upstream-Status: Pending
+---
+ drivers/usb/musb/sunxi.c | 27 +++++++++++++++++++--------
+ 1 file changed, 19 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/usb/musb/sunxi.c b/drivers/usb/musb/sunxi.c
+index 7e91b9c..7c8aad7 100644
+--- a/drivers/usb/musb/sunxi.c
++++ b/drivers/usb/musb/sunxi.c
+@@ -270,10 +270,12 @@ static int sunxi_musb_init(struct musb *musb)
+ 	writeb(SUNXI_MUSB_VEND0_PIO_MODE, musb->mregs + SUNXI_MUSB_VEND0);
+ 
+ 	/* Register notifier before calling phy_init() */
+-	ret = devm_extcon_register_notifier(glue->dev, glue->extcon,
+-					EXTCON_USB_HOST, &glue->host_nb);
+-	if (ret)
+-		goto error_usb_reset_assert;
++	if (glue->extcon) {
++		ret = devm_extcon_register_notifier(glue->dev, glue->extcon,
++						    EXTCON_USB_HOST, &glue->host_nb);
++		if (ret)
++			goto error_usb_reset_assert;
++	}
+ 
+ 	ret = phy_init(glue->phy);
+ 	if (ret)
+@@ -806,10 +808,12 @@ static int sunxi_musb_probe(struct platform_device *pdev)
+ 		return dev_err_probe(&pdev->dev, PTR_ERR(glue->rst_usb),
+ 				     "Error getting usb reset\n");
+ 
+-	glue->extcon = extcon_get_edev_by_phandle(&pdev->dev, 0);
+-	if (IS_ERR(glue->extcon))
+-		return dev_err_probe(&pdev->dev, PTR_ERR(glue->extcon),
+-				     "Invalid or missing extcon\n");
++	if (pdata.mode != MUSB_PERIPHERAL) {
++		glue->extcon = extcon_get_edev_by_phandle(&pdev->dev, 0);
++		if (IS_ERR(glue->extcon))
++			return dev_err_probe(&pdev->dev, PTR_ERR(glue->extcon),
++					     "Invalid or missing extcon\n");
++	}
+ 	glue->phy = devm_phy_get(&pdev->dev, "usb");
+ 	if (IS_ERR(glue->phy))
+ 		return dev_err_probe(&pdev->dev, PTR_ERR(glue->phy),
+@@ -881,6 +885,11 @@ static const struct sunxi_musb_cfg sun8i_a33_musb_cfg = {
+ 	.no_configdata = true,
+ };
+ 
++static const struct sunxi_musb_cfg sun300i_v821_musb_cfg = {
++	.hdrc_config = &sunxi_musb_hdrc_config_5eps,
++	.no_configdata = true,
++};
++
+ static const struct sunxi_musb_cfg sun8i_h3_musb_cfg = {
+ 	.hdrc_config = &sunxi_musb_hdrc_config_4eps,
+ 	.has_reset = true,
+@@ -901,6 +910,8 @@ static const struct of_device_id sunxi_musb_match[] = {
+ 	  .data = &sun6i_a31_musb_cfg, },
+ 	{ .compatible = "allwinner,sun8i-a33-musb",
+ 	  .data = &sun8i_a33_musb_cfg, },
++	{ .compatible = "allwinner,sun300i-v821-musb",
++	  .data = &sun300i_v821_musb_cfg, },
+ 	{ .compatible = "allwinner,sun8i-h3-musb",
+ 	  .data = &sun8i_h3_musb_cfg, },
+ 	{ .compatible = "allwinner,suniv-f1c100s-musb",

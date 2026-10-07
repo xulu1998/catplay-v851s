@@ -1,0 +1,57 @@
+U5A diagnostics: log head-unit HID events (first 30, then every 200th) with their timestamp
+translation, and whether the overlay consumed them, at info level. Used to find why touch input does
+not reach the iPhone after an automatic reconnect.
+
+Upstream-Status: Inappropriate [U5A debugging]
+
+diff --git a/c2a/catplay_c2a/src/proxy_rpc/car_manager.rs b/c2a/catplay_c2a/src/proxy_rpc/car_manager.rs
+index 48580d9..4b0a25f 100644
+--- a/c2a/catplay_c2a/src/proxy_rpc/car_manager.rs
++++ b/c2a/catplay_c2a/src/proxy_rpc/car_manager.rs
+@@ -28,6 +28,8 @@ use crate::{
+     proxy_rpc::{ModesArbiter, TxAdapterOp, car_to_iphone_command_task::CarToIphoneCommandTask, overlay_manager::OverlayManager},
+ };
+ 
++static U5A_HID_SEEN: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
++
+ pub struct CarManager {
+     // TODO dont wrap the ref with TeardownGuard...
+     car_state: TeardownGuard<AirPlayTransmitterProxyRef>,
+@@ -518,6 +520,7 @@ impl CarManager {
+         if let Command::HidSendReport(hid) = cmd.command_mut() {
+             let car_media_clock = &mut self.car_media_clock;
+ 
++            let raw = hid.timestamp;
+             let decoded = hid
+                 .timestamp
+                 .map(|t| car_media_clock.decode_local(NtpU64(t)));
+@@ -527,7 +530,18 @@ impl CarManager {
+             let encoded = decoded.and_then(|t| phone.media_clock().encode_remote(t).map(|t| t.0));
+             hid.timestamp = encoded;
+ 
++            // U5A diagnostics: first 30 HID events per process, then every 200th
++            let n = U5A_HID_SEEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++            let verbose = n < 30 || n % 200 == 0;
++            if verbose {
++                info!(
++                    "U5A HID #{n} (connected): car ts {raw:?} -> decoded {:?} -> iPhone ts {encoded:?}",
++                    decoded.map(|d| Pts(d).to_string())
++                );
++            }
++
+             if !self.overlay.on_hid_interact() {
++                info!("U5A HID #{n} consumed by overlay (pairing confirmation), not sent to iPhone");
+                 cmd.respond_ok();
+                 return;
+             }
+@@ -612,6 +626,10 @@ impl CarManager {
+                 cmd.respond_ok();
+             }
+             Command::HidSendReport(_) => {
++                let n = U5A_HID_SEEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++                if n < 30 || n % 200 == 0 {
++                    info!("U5A HID #{n} with no iPhone connected (overlay only)");
++                }
+                 self.overlay.on_hid_interact();
+                 // Generic UI interaction/clicked any button
+                 cmd.respond_ok();

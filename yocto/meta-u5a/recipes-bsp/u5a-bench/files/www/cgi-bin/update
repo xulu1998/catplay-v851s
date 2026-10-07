@@ -1,0 +1,40 @@
+#!/bin/sh
+# Firmware update over Wi-Fi. POST body = U5A OTA bundle (scripts/make-ota.py):
+#   0x00 "U5AOTA01"  0x08 payload length (u32 LE)  0x0c reserved  0x10 version (32 bytes, NUL padded)
+#   0x30 SHA-256 of the payload (32 bytes)          0x50 payload = NOR bytes from 0x80000 (u5a-system)
+# The whole bundle is received and checked (magic, length, boot table magic at 0x470000, SHA-256) before
+# anything is written. Only the u5a-system partition is written; Boot0, the TOC1 loader (u5a-loader,
+# read-only) and /persist are never touched. flashcp always verifies the write by reading it back (-v would only add progress lines).
+echo "Content-Type: application/json"
+echo
+fail() {
+    rm -f /run/ota/hdr.bin /run/ota/payload.bin     # give the RAM back
+    printf '{"ok":false,"error":"%s"}\n' "$1"; echo "U5A: OTA failed: $1" > /dev/kmsg; exit 0
+}
+[ "$REQUEST_METHOD" = POST ] || fail "POST only"
+len=${CONTENT_LENGTH:-0}
+[ "$len" -gt 80 ] && [ "$len" -le 15400000 ] || fail "bad size"
+MTD=$(grep -l '^u5a-system$' /sys/class/mtd/mtd*/name 2>/dev/null | head -n 1 | sed 's#/sys/class/mtd/\(mtd[0-9]*\)/name#\1#')
+[ -n "$MTD" ] || fail "u5a-system partition not found"
+rm -f /run/u5a/catplay-run.pid            # the catplay supervisor must not restart it
+killall catplay_c2a 2>/dev/null           # frees about 15 MB; CarPlay is down during the update anyway
+mkdir -p /run/ota && { mountpoint -q /run/ota || mount -t tmpfs -o size=15400k tmpfs /run/ota; } || fail "no RAM for the bundle"
+# header (exactly 80 bytes, read byte by byte so nothing more is taken from the pipe) and payload go to
+# separate files: only one copy of the 14 MB payload ever sits in RAM
+dd of=/run/ota/hdr.bin bs=1 count=80 2>/dev/null
+head -c "$((len - 80))" > /run/ota/payload.bin
+got=$(( $(wc -c < /run/ota/hdr.bin) + $(wc -c < /run/ota/payload.bin) ))
+[ "$got" = "$len" ] || fail "upload truncated ($got of $len bytes)"
+[ "$(head -c 8 /run/ota/hdr.bin)" = "U5AOTA01" ] || fail "not a U5A firmware file"
+plen=$(hexdump -s 8 -n 4 -e '1/4 "%u"' /run/ota/hdr.bin)
+[ "$((plen + 80))" = "$len" ] || fail "length field does not match the file"
+want=$(hexdump -v -s 48 -n 32 -e '1/1 "%02x"' /run/ota/hdr.bin)
+have=$(sha256sum /run/ota/payload.bin | cut -d' ' -f1)
+[ "$have" = "$want" ] || fail "checksum mismatch: damaged upload"
+# boot table ('U5AB') must sit at NOR 0x470000 = payload offset 0x3f0000
+[ "$(dd if=/run/ota/payload.bin bs=1 skip=$((0x3f0000)) count=4 2>/dev/null)" = "U5AB" ] || fail "boot table missing"
+echo "U5A: OTA writing $plen bytes to /dev/$MTD" > /dev/kmsg
+flashcp /run/ota/payload.bin /dev/$MTD > /run/u5a/ota.log 2>&1 || fail "write failed, see /run/u5a/ota.log; the box may need the computer to recover"
+rm -f /run/ota/payload.bin /run/ota/hdr.bin
+echo "U5A: OTA write verified" > /dev/kmsg
+echo '{"ok":true}'

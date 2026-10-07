@@ -1,0 +1,237 @@
+Date: Wed, 12 Aug 2026 14:00:00 +0200
+Subject: [PATCH 3/4] usb: musb: sunxi: expose userspace role switch
+
+V821 has a dual-routed PHY0: device mode is connected to MUSB, while
+host mode is connected to a separate EHCI/OHCI pair. Register a userspace
+role switch on the MUSB glue device and instantiate the two host
+controllers only while host mode is selected. This keeps their
+vendor-specific clocks and resets off during gadget boot and releases
+them again on return to device mode. Depopulate the OF devices through
+the OF helper so their OF_POPULATED flags are cleared and a later host
+cycle can instantiate them again.
+
+Start with no active software role and apply the initial device role
+through the role-switch callback. This makes cold boot follow the same
+initialization path as a later host-to-device transition instead of
+relying on firmware state.
+
+Upstream-Status: Pending
+---
+ drivers/usb/musb/sunxi.c | 157 +++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 157 insertions(+)
+
+diff --git a/drivers/usb/musb/sunxi.c b/drivers/usb/musb/sunxi.c
+index 7c8aad7..fa5f908 100644
+--- a/drivers/usb/musb/sunxi.c
++++ b/drivers/usb/musb/sunxi.c
+@@ -14,13 +14,16 @@
+ #include <linux/io.h>
+ #include <linux/kernel.h>
+ #include <linux/module.h>
++#include <linux/mutex.h>
+ #include <linux/of.h>
++#include <linux/of_platform.h>
+ #include <linux/phy/phy-sun4i-usb.h>
+ #include <linux/platform_device.h>
+ #include <linux/reset.h>
+ #include <linux/soc/sunxi/sunxi_sram.h>
+ #include <linux/usb/musb.h>
+ #include <linux/usb/of.h>
++#include <linux/usb/role.h>
+ #include <linux/usb/usb_phy_generic.h>
+ #include <linux/workqueue.h>
+ #include "musb_core.h"
+@@ -95,6 +98,12 @@ struct sunxi_glue {
+ 	struct work_struct	work;
+ 	struct extcon_dev	*extcon;
+ 	struct notifier_block	host_nb;
++	struct usb_role_switch	*role_sw;
++	struct platform_device	*ehci_pdev;
++	struct platform_device	*ohci_pdev;
++	/* Serializes role changes and host controller lifetime. */
++	struct mutex		role_lock;
++	enum usb_role		role;
+ };
+ 
+ /* phy_power_on / off may sleep, so we use a workqueue  */
+@@ -212,6 +221,10 @@ static int sunxi_musb_host_notifier(struct notifier_block *nb,
+ {
+ 	struct sunxi_glue *glue = container_of(nb, struct sunxi_glue, host_nb);
+ 
++	/* A userspace role switch means host mode belongs to the EHCI/OHCI pair. */
++	if (glue->role_sw && event)
++		event = 0;
++
+ 	if (event)
+ 		set_bit(SUNXI_MUSB_FL_HOSTMODE, &glue->flags);
+ 	else
+@@ -223,6 +236,136 @@ static int sunxi_musb_host_notifier(struct notifier_block *nb,
+ 	return NOTIFY_DONE;
+ }
+ 
++static void sunxi_musb_remove_host_controllers(struct sunxi_glue *glue)
++{
++	if (glue->ohci_pdev) {
++		of_platform_device_destroy(&glue->ohci_pdev->dev, NULL);
++		glue->ohci_pdev = NULL;
++	}
++
++	if (glue->ehci_pdev) {
++		of_platform_device_destroy(&glue->ehci_pdev->dev, NULL);
++		glue->ehci_pdev = NULL;
++	}
++}
++
++static struct platform_device *
++sunxi_musb_add_host_controller(struct sunxi_glue *glue,
++			       const char *compatible)
++{
++	struct platform_device *pdev;
++	struct device_node *np;
++
++	np = of_get_compatible_child(glue->dev->of_node, compatible);
++	if (!np)
++		return ERR_PTR(-ENODEV);
++
++	pdev = of_platform_device_create(np, NULL, glue->dev);
++	of_node_put(np);
++	if (!pdev)
++		return ERR_PTR(-ENODEV);
++
++	return pdev;
++}
++
++static int sunxi_musb_role_switch_set(struct usb_role_switch *sw,
++				      enum usb_role role)
++{
++	struct sunxi_glue *glue = usb_role_switch_get_drvdata(sw);
++	enum phy_mode mode;
++	int ret = 0;
++
++	mutex_lock(&glue->role_lock);
++	if (role == glue->role)
++		goto out;
++
++	switch (role) {
++	case USB_ROLE_HOST:
++		ret = phy_set_mode(glue->phy, PHY_MODE_USB_HOST);
++		if (ret)
++			goto out;
++
++		/* The PHY worker ends the gadget session before re-routing PHY0. */
++		msleep(100);
++		glue->ehci_pdev = sunxi_musb_add_host_controller(glue,
++								 "generic-ehci");
++		if (IS_ERR(glue->ehci_pdev)) {
++			ret = PTR_ERR(glue->ehci_pdev);
++			glue->ehci_pdev = NULL;
++			goto restore_device;
++		}
++
++		glue->ohci_pdev = sunxi_musb_add_host_controller(glue,
++								 "generic-ohci");
++		if (IS_ERR(glue->ohci_pdev)) {
++			ret = PTR_ERR(glue->ohci_pdev);
++			glue->ohci_pdev = NULL;
++			sunxi_musb_remove_host_controllers(glue);
++			goto restore_device;
++		}
++		break;
++
++	case USB_ROLE_DEVICE:
++		mode = PHY_MODE_USB_DEVICE;
++		goto remove_host;
++
++	case USB_ROLE_NONE:
++		mode = PHY_MODE_USB_OTG;
++remove_host:
++		sunxi_musb_remove_host_controllers(glue);
++		ret = phy_set_mode(glue->phy, mode);
++		if (ret)
++			goto out;
++		break;
++
++	default:
++		ret = -EINVAL;
++		goto out;
++	}
++
++	glue->role = role;
++	goto out;
++
++restore_device:
++	phy_set_mode(glue->phy, PHY_MODE_USB_DEVICE);
++out:
++	mutex_unlock(&glue->role_lock);
++	return ret;
++}
++
++static enum usb_role sunxi_musb_role_switch_get(struct usb_role_switch *sw)
++{
++	struct sunxi_glue *glue = usb_role_switch_get_drvdata(sw);
++
++	return glue->role;
++}
++
++static int sunxi_musb_role_switch_register(struct sunxi_glue *glue)
++{
++	struct usb_role_switch_desc desc = {
++		.set = sunxi_musb_role_switch_set,
++		.get = sunxi_musb_role_switch_get,
++		.allow_userspace_control = true,
++		.fwnode = dev_fwnode(glue->dev),
++		.driver_data = glue,
++	};
++	int ret;
++
++	mutex_init(&glue->role_lock);
++	glue->role = USB_ROLE_NONE;
++	glue->role_sw = usb_role_switch_register(glue->dev, &desc);
++	if (IS_ERR(glue->role_sw))
++		return PTR_ERR(glue->role_sw);
++
++	ret = usb_role_switch_set_role(glue->role_sw, USB_ROLE_DEVICE);
++	if (ret) {
++		usb_role_switch_unregister(glue->role_sw);
++		glue->role_sw = NULL;
++	}
++
++	return ret;
++}
++
+ static int sunxi_musb_init(struct musb *musb)
+ {
+ 	struct sunxi_glue *glue = dev_get_drvdata(musb->controller->parent);
+@@ -283,11 +426,19 @@ static int sunxi_musb_init(struct musb *musb)
+ 
+ 	musb->isr = sunxi_musb_interrupt;
+ 
++	if (device_property_read_bool(glue->dev, "usb-role-switch")) {
++		ret = sunxi_musb_role_switch_register(glue);
++		if (ret)
++			goto error_phy_exit;
++	}
++
+ 	/* Stop the musb-core from doing runtime pm (not supported on sunxi) */
+ 	pm_runtime_get(musb->controller);
+ 
+ 	return 0;
+ 
++error_phy_exit:
++	phy_exit(glue->phy);
+ error_usb_reset_assert:
+ 	reset_control_assert(glue->rst_usb);
+ error_otg_reset_assert:
+@@ -311,6 +462,12 @@ static int sunxi_musb_exit(struct musb *musb)
+ 	struct sunxi_glue *glue = dev_get_drvdata(musb->controller->parent);
+ 
+ 	pm_runtime_put(musb->controller);
++	if (!IS_ERR_OR_NULL(glue->role_sw)) {
++		usb_role_switch_unregister(glue->role_sw);
++		mutex_lock(&glue->role_lock);
++		sunxi_musb_remove_host_controllers(glue);
++		mutex_unlock(&glue->role_lock);
++	}
+ 
+ 	cancel_work_sync(&glue->work);
+ 	if (test_bit(SUNXI_MUSB_FL_PHY_ON, &glue->flags))

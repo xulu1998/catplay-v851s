@@ -1,0 +1,50 @@
+From d9c80db6956094bfeb5b4d7d9d0187bd38f11555 Mon Sep 17 00:00:00 2001
+From: xulu1998 <58898570+xulu1998@users.noreply.github.com>
+Date: Wed, 7 Oct 2026 09:09:01 -0400
+Subject: [PATCH] catplay_carplay_rx_gadget: page the iPhone again when a
+ session ends
+
+The iPhone drops its Bluetooth link once the wireless session is up. When
+the session then ends (for example the phone's Wi-Fi is turned off and on
+again), nothing reconnects it: the phone rejoins the Wi-Fi but CarPlay only
+comes back after reconnecting Bluetooth by hand.
+
+When a received session ends, start the last-connect task again for the
+phone that was connected, so it is paged until it comes back.
+
+Upstream-Status: Pending
+
+---
+ catplay_carplay_rx_gadget/src/server_wireless.rs | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/catplay_carplay_rx_gadget/src/server_wireless.rs b/catplay_carplay_rx_gadget/src/server_wireless.rs
+index fb327b9..7e3b26c 100644
+--- a/catplay_carplay_rx_gadget/src/server_wireless.rs
++++ b/catplay_carplay_rx_gadget/src/server_wireless.rs
+@@ -540,6 +540,22 @@ impl<T: AirPlayReceiverSink> Reconcilable for CarPlayWirelessGadget<T> {
+ 
+                 server.stop_inviting();
+ 
++                // The session just ended (e.g. the phone's Wi-Fi went away). The phone dropped its Bluetooth
++                // link when the session started, so nothing brings it back unless we page it again.
++                if _status == &LocalState::Receiving
++                    && self.find_active_session().is_none()
++                    && let Some(mac) = self.last_mac
++                    && let Some(peer_mac) = self.get_bt_last_connect().or(self.last_bt_peer)
++                {
++                    info!("Session ended, reconnecting to iPhone peer {peer_mac}");
++                    return LocalState::StartingLastConnect {
++                        hci: self.hci.clone(),
++                        mac,
++                        peer_mac,
++                    }
++                    .into();
++                }
++
+                 match self.find_active_session() {
+                     None if self.invites_blocked => LocalState::Passive.into(),
+                     None => LocalState::Inviting.into(),
+-- 
+2.54.0 (Apple Git-157)
+

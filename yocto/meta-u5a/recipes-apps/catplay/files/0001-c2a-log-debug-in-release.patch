@@ -1,0 +1,16 @@
+U5A: keep debug-level log statements in the release build so a head-unit session can be diagnosed from
+the logs the box saves to /persist (E33). Only changes the compile-time maximum log level.
+
+Upstream-Status: Inappropriate [U5A debugging configuration]
+
+--- a/c2a/catplay_c2a/Cargo.toml
++++ b/c2a/catplay_c2a/Cargo.toml
+@@ -15,7 +15,7 @@
+ 
+ libc = "=1.0.0-alpha.4"
+ log = { version = "0.4.27", default-features = false, features = [
+-    "release_max_level_info",
++    "release_max_level_debug",
+ ] }
+ macaddr = "1.0.1"
+ 

@@ -1,0 +1,29 @@
+Date: Wed, 2 Sep 2026 15:10:00 +0200
+Subject: [PATCH 3/6] phy: sun4i-usb: skip squelch detection for VCBUS
+
+VCBUS PHYs do not expose the legacy squelch-detect test-point field.
+Pretending this operation is valid for all devices may lead to undefined
+behavior.
+
+Make sun4i_usb_phy_set_squelch_detect() a no-op for VCBUS PHYs.
+
+Upstream-Status: Pending
+---
+ drivers/phy/allwinner/phy-sun4i-usb.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/drivers/phy/allwinner/phy-sun4i-usb.c b/drivers/phy/allwinner/phy-sun4i-usb.c
+--- a/drivers/phy/allwinner/phy-sun4i-usb.c
++++ b/drivers/phy/allwinner/phy-sun4i-usb.c
+@@ -643,5 +643,9 @@ void sun4i_usb_phy_set_squelch_detect(struct phy *_phy, bool enabled)
+ {
+ 	struct sun4i_usb_phy *phy = phy_get_drvdata(_phy);
++	struct sun4i_usb_phy_data *data = to_sun4i_usb_phy_data(phy);
++
++	if (data->cfg->vcbus)
++		return;
+ 
+ 	sun4i_usb_phy_write(phy, PHY_SQUELCH_DETECT, enabled ? 0 : 2, 2);
+ }
+-- 
+2.55.0

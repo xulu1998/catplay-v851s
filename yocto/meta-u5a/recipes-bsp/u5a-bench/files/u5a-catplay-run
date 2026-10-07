@@ -1,0 +1,66 @@
+#!/bin/sh
+# Runs catplay_c2a, restarts it if it exits, and filters its log into /run/u5a/catplay.log (tmpfs, i.e. RAM).
+# Supervision: when catplay exits on its own, its exit status goes into the log, a crash snapshot is saved
+# (u5a-snapshot crash) and it is started again after 2 s (30 s after five quick exits in a row). Whoever
+# stops catplay on purpose (u5a-settings apply, the firmware update page) removes the pid file first.
+# Log filter: catplay dumps every RTSP request/response at WARN, including the once-per-second /feedback
+# exchange, which fills about 3.6 MB of RAM per hour of driving. The filter drops those periodic dumps (and the
+# per-frame and encoder noise), keeps everything else, and rotates the log at 2 MB (one old copy,
+# catplay.log.1).
+# Usage: u5a-catplay-run [append]   (append: keep the existing log, used by u5a-settings apply)
+PIDFILE=/run/u5a/catplay-run.pid
+cd /run/u5a || exit 1
+[ "${1:-}" = append ] || : > /run/u5a/catplay.log
+echo $$ > $PIDFILE
+quick=0
+while [ "$(cat $PIDFILE 2>/dev/null)" = "$$" ]; do
+started=$(cut -d. -f1 /proc/uptime)
+# catplay logs to stderr, so both streams go through the filter (catplay ignores SIGPIPE; the filter was
+# tested with busybox 1.37 awk on a real car log). The exit line is formatted as a log record.
+{ /usr/bin/catplay_c2a 2>&1; rc=$?; echo "[ $(cut -d' ' -f1 /proc/uptime)s ERROR u5a-catplay-run] U5A-CATPLAY-EXIT status $rc"; } | awk -v out=/run/u5a/catplay.log -v max=2097152 '
+function cseq(   m) {
+    if (match(blk, /CSeq: [0-9]+/)) return rtsp substr(blk, RSTART + 6, RLENGTH - 6)
+    return ""
+}
+function flush_block(   keep, k) {
+    if (blk == "") return
+    keep = 1
+    if (rtsp != "") {
+        k = cseq()
+        if (blk ~ /(Sending|Received) request/ && blk ~ /\/feedback/) { keep = 0; if (k != "") fb[k] = 1 }
+        else if (blk ~ /(Sending|Received) response/) {
+            if (k != "" && (k in fb)) { keep = 0; delete fb[k] }
+            else if (blk !~ /Payload/) keep = 0     # bare "200 OK": no information
+        }
+    }
+    if (keep) { printf "%s", blk >> out; size += length(blk); fflush(out) }
+    blk = ""
+    if (size > max) { close(out); system("mv -f " out " " out ".1"); size = 0 }
+}
+{
+    line = $0
+    plain = line; gsub(/\033\[[0-9;]*m/, "", plain)
+    if (plain ~ /^\[ *[0-9]+\.[0-9]+s /) {          # a new log record starts
+        flush_block()
+        if (plain ~ /Stream feedback:|Flushing video frame|Finished OP |Returning 200 \(OK\) .*POST \/feedback/) { skip = 1; next }
+        # two lines per touch event (up to ~60/s while dragging); catplay patch 0004 logs a sample ("U5A HID")
+        # and failures are still kept
+        if (plain ~ /Proxying car command HidSendReport|iPhone responded to command HidSendReport .* status 200 /) { skip = 1; next }
+        skip = 0
+        rtsp = ""
+        if (plain ~ /rtsp_session::rtsp_transmitter\]/) rtsp = "t"
+        if (plain ~ /rtsp_session::rtsp_receiver\]/) rtsp = "r"
+        blk = line "\n"
+        next
+    }
+    if (plain ~ /^x264 \[info\]/) next
+    if (skip) next
+    blk = blk line "\n"
+}
+END { flush_block() }'
+[ "$(cat $PIDFILE 2>/dev/null)" = "$$" ] || break     # stopped on purpose
+echo "U5A: catplay exited, restarting" > /dev/kmsg
+u5a-snapshot crash
+if [ $(( $(cut -d. -f1 /proc/uptime) - started )) -lt 30 ]; then quick=$((quick + 1)); else quick=0; fi
+if [ $quick -ge 5 ]; then sleep 30; else sleep 2; fi
+done

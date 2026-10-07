@@ -1,0 +1,20 @@
+diff -ru a/iphone_dev.c b/iphone_dev.c
+--- a/iphone_dev.c	2026-10-06 09:18:49
++++ b/iphone_dev.c	2026-10-06 09:18:57
+@@ -277,8 +277,16 @@
+ }
+ 
+ 
++/* Boards whose UDC name does not map to the role-switch device (e.g. V851S: musb-hdrc.2.auto -> 4100000.usb). */
++static char *role_switch_name;
++module_param(role_switch_name, charp, 0444);
++MODULE_PARM_DESC(role_switch_name, "usb_role device name without the -role-switch suffix");
++
+ static const char *iphone_dev_role_switch_name(const char *gadget_name)
+ {
++	if (role_switch_name && role_switch_name[0])
++		return role_switch_name;
++
+ 	if (!gadget_name || !gadget_name[0])
+ 		return NULL;
+ 

@@ -1,0 +1,101 @@
+Date: Wed, 2 Sep 2026 18:47:42 +0200
+Subject: [PATCH 5/6] phy: sun4i-usb: apply explicit VCBUS roles
+ synchronously
+
+The legacy sun4i detection worker mixes cable detection with applying the
+selected role, which makes explicit role changes asynchronous and lets a new
+controller start before ID, VBUS-valid, passby and routing are configured.
+
+This is an attempt to untangle that legacy mess without breaking backwards
+compatibility. Add an explicit_role quirk for PHYs which can apply explicit
+host and peripheral modes synchronously. Keep OTG detection and all existing
+PHY configurations on the legacy worker path unless they opt in.
+
+Upstream-Status: Pending
+---
+ drivers/phy/allwinner/phy-sun4i-usb.c | 41 +++++++++++++++++++++++++++
+ 1 file changed, 41 insertions(+)
+
+diff --git a/drivers/phy/allwinner/phy-sun4i-usb.c b/drivers/phy/allwinner/phy-sun4i-usb.c
+index 83ddd3b..1bdc4d2 100644
+--- a/drivers/phy/allwinner/phy-sun4i-usb.c
++++ b/drivers/phy/allwinner/phy-sun4i-usb.c
+@@ -186,6 +186,7 @@ struct sun4i_usb_phy_cfg {
+ 	u8 phyctl_offset;
+ 	bool dedicated_clocks;
+ 	bool vcbus;
++	bool explicit_role;
+ 	bool phy0_dual_route;
+ 	bool needs_phy2_siddq;
+ 	bool siddq_in_base;
+@@ -633,6 +633,32 @@ static int sun4i_usb_phy_power_off(struct phy *_phy)
+ 	return 0;
+ }
+ 
++static void sun4i_usb_phy0_reroute(struct sun4i_usb_phy_data *data,
++				    int id_det);
++
++static bool sun4i_usb_phy0_has_explicit_role(struct sun4i_usb_phy_data *data)
++{
++	return data->cfg->explicit_role;
++}
++
++static void sun4i_usb_phy0_apply_mode(struct phy *_phy,
++				      enum usb_dr_mode mode)
++{
++	struct sun4i_usb_phy *phy = phy_get_drvdata(_phy);
++	struct sun4i_usb_phy_data *data = to_sun4i_usb_phy_data(phy);
++	int id_det = mode == USB_DR_MODE_HOST ? 0 : 1;
++	int vbus_det = sun4i_usb_phy0_get_vbus_det(data);
++
++	sun4i_usb_phy0_set_id_detect(_phy, id_det);
++	sun4i_usb_phy0_set_vbus_detect(_phy, vbus_det);
++	sun4i_usb_phy_passby(phy, !id_det);
++	sun4i_usb_phy0_reroute(data, id_det);
++
++	data->id_det = id_det;
++	data->vbus_det = vbus_det;
++	data->force_session_end = false;
++}
++
+ static int sun4i_usb_phy_set_mode(struct phy *_phy,
+ 				  enum phy_mode mode, int submode)
+ {
+@@ -665,6 +691,12 @@ static int sun4i_usb_phy_set_mode(struct phy *_phy,
+ 		data->dr_mode = new_mode;
+ 	}
+ 
++	if (sun4i_usb_phy0_has_explicit_role(data) &&
++	    new_mode != USB_DR_MODE_OTG) {
++		sun4i_usb_phy0_apply_mode(_phy, new_mode);
++		return 0;
++	}
++
+ 	data->id_det = -1; /* Force reprocessing of id */
+ 	data->force_session_end = true;
+ 	queue_delayed_work(system_percpu_wq, &data->detect, 0);
+@@ -731,6 +763,13 @@ static void sun4i_usb_phy0_id_vbus_det_scan(struct work_struct *work)
+ 		return;
+ 	}
+ 
++	/* Explicit HOST and DEVICE modes are applied synchronously. */
++	if (sun4i_usb_phy0_has_explicit_role(data) &&
++	    data->dr_mode != USB_DR_MODE_OTG) {
++		mutex_unlock(&phy0->mutex);
++		return;
++	}
++
+ 	force_session_end = data->force_session_end;
+ 	data->force_session_end = false;
+ 
+@@ -1119,6 +1159,7 @@ static const struct sun4i_usb_phy_cfg sun300i_v821_cfg = {
+ 	.phyctl_offset = REG_PHYCTL_A33,
+ 	.dedicated_clocks = true,
+ 	.vcbus = true,
++	.explicit_role = true,
+ 	.hci_phy_ctl_clear = PHY_CTL_SIDDQ,
+ 	.phy0_dual_route = true,
+ 	.siddq_in_base = true,
+ 
+-- 
+2.55.0

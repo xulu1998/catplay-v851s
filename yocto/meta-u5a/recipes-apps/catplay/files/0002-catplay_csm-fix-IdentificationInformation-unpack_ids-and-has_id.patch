@@ -1,0 +1,98 @@
+From 1b4eb2b6d6bee4c3ca39b632141cdb25334ca4e1 Mon Sep 17 00:00:00 2001
+From: xulu1998 <58898570+xulu1998@users.noreply.github.com>
+Date: Tue, 6 Oct 2026 22:38:58 -0400
+Subject: [PATCH 1/2] catplay_csm: fix IdentificationInformation::unpack_ids
+ and has_id
+
+unpack_ids looped on the length of its (empty) output vector, so it always
+returned an empty list: Identification's "Modern CarPlay" check could never
+be true. has_id never advanced its index and compared ids.len() / 2 with a
+byte index, so it spun forever on any list of two or more IDs whose first
+entry did not match (wants_rx/wants_tx have no callers yet).
+
+Decode both with chunks_exact(2); a trailing odd byte is ignored.
+
+Upstream-Status: Pending
+
+---
+ core/catplay_csm/src/msg/ident.rs    | 23 ++++++---------------
+ core/catplay_csm/tests/ident_test.rs | 30 ++++++++++++++++++++++++++++
+ 2 files changed, 36 insertions(+), 17 deletions(-)
+ create mode 100644 core/catplay_csm/tests/ident_test.rs
+
+diff --git a/core/catplay_csm/src/msg/ident.rs b/core/catplay_csm/src/msg/ident.rs
+index b9f34f9..6b2a1e0 100644
+--- a/core/catplay_csm/src/msg/ident.rs
++++ b/core/catplay_csm/src/msg/ident.rs
+@@ -53,26 +53,15 @@ impl IdentificationInformation {
+     }
+ 
+     pub fn unpack_ids(ids: &CsmByteArray) -> CsmVec<u16> {
+-        let mut out = CsmVec::with_capacity(ids.data.len() / 2);
+-        let i = 0;
+-        while i + 1 < out.len() {
+-            let id = u16::from_be_bytes([ids.data[i], ids.data[i + 1]]);
+-            out.push(id);
+-        }
+-
+-        out
++        ids.data
++            .chunks_exact(2)
++            .map(|id| u16::from_be_bytes([id[0], id[1]]))
++            .collect()
+     }
+ 
+     pub fn has_id(ids: &[u8], id: u16) -> bool {
+-        let i = 0;
+-        while i + 1 < ids.len() / 2 {
+-            let tmp = u16::from_be_bytes([ids[i], ids[i + 1]]);
+-            if id == tmp {
+-                return true;
+-            }
+-        }
+-
+-        false
++        ids.chunks_exact(2)
++            .any(|tmp| u16::from_be_bytes([tmp[0], tmp[1]]) == id)
+     }
+ 
+     pub fn wants_rx(&self, id: u16) -> bool {
+diff --git a/core/catplay_csm/tests/ident_test.rs b/core/catplay_csm/tests/ident_test.rs
+new file mode 100644
+index 0000000..d3b00b9
+--- /dev/null
++++ b/core/catplay_csm/tests/ident_test.rs
+@@ -0,0 +1,30 @@
++#[cfg(test)]
++mod tests {
++    use catplay_csm::{decoder::*, msg::IdentificationInformation};
++
++    #[test]
++    fn test_ident_ids_round_trip() {
++        let ids = [0x1D02, 0x4E0E, 0xAE00, 0x4E0A];
++        let packed = IdentificationInformation::pack_ids(&ids);
++        assert_eq!(packed.data, vec![0x1D, 0x02, 0x4E, 0x0E, 0xAE, 0x00, 0x4E, 0x0A]);
++        assert_eq!(IdentificationInformation::unpack_ids(&packed), ids);
++    }
++
++    #[test]
++    fn test_ident_has_id() {
++        let packed = IdentificationInformation::pack_ids(&[0x1D02, 0x4E0E, 0xAE00]);
++        assert!(IdentificationInformation::has_id(&packed.data, 0x1D02));
++        assert!(IdentificationInformation::has_id(&packed.data, 0x4E0E));
++        assert!(IdentificationInformation::has_id(&packed.data, 0xAE00));
++        // must not match across the boundary of two IDs (0x02 0x4E)
++        assert!(!IdentificationInformation::has_id(&packed.data, 0x024E));
++        assert!(!IdentificationInformation::has_id(&packed.data, 0x4E0A));
++        assert!(!IdentificationInformation::has_id(&[], 0x1D02));
++        // a trailing odd byte is ignored
++        assert!(!IdentificationInformation::has_id(&[0x1D], 0x1D00));
++        assert_eq!(
++            IdentificationInformation::unpack_ids(&CsmByteArray::new(vec![0x1D, 0x02, 0x4E])),
++            vec![0x1D02]
++        );
++    }
++}
+-- 
+2.54.0 (Apple Git-157)
+

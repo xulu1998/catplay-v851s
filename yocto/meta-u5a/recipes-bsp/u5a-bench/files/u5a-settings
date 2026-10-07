@@ -1,0 +1,45 @@
+#!/bin/sh
+# U5A settings: /persist/settings.conf (KEY=VALUE lines, written by the web page), defaults in
+# /etc/u5a/settings-defaults.conf. Values are only ever read as data (grep/cut/awk), never sourced.
+#   u5a-settings get KEY
+#   u5a-settings render MODE   write /run/u5a/hostapd.conf and /etc/catplay/catplay.conf, preferred phone
+#   u5a-settings apply MODE    render, then restart hostapd and catplay (no reboot: warm resets lose BT)
+S=/persist/settings.conf
+D=/etc/u5a/settings-defaults.conf
+get() {
+    v=$(grep -m1 "^$1=" "$S" 2>/dev/null | cut -d= -f2-)
+    [ -n "$v" ] || v=$(grep -m1 "^$1=" "$D" | cut -d= -f2-)
+    printf '%s' "$v"
+}
+render() {
+    mode=$1
+    mkdir -p /run/u5a /etc/catplay
+    awk -v ssid="$(get WIFI_SSID)" -v pass="$(get WIFI_PASS)" -v ch="$(get WIFI_CHANNEL)" '
+        /^ssid=/ { print "ssid=" ssid; next }
+        /^wpa_passphrase=/ { print "wpa_passphrase=" pass; next }
+        /^channel=/ { print "channel=" ch; next }
+        { print }' /etc/u5a/hostapd.conf > /run/u5a/hostapd.conf
+    awk -v ssid="$(get WIFI_SSID)" -v pass="$(get WIFI_PASS)" -v bt="$(get BT_NAME)" -v ch="$(get WIFI_CHANNEL)" '
+        /^\[/ { sec = $0 }
+        sec == "[wifi_network]" && /^ssid = / { print "ssid = \"" ssid "\""; next }
+        sec == "[wifi_network]" && /^password = / { print "password = \"" pass "\""; next }
+        sec == "[wifi_network]" && /^channel = / { print "channel = " ch; next }
+        sec == "[bluetooth]" && /^name = / { print "name = \"" bt "\""; next }
+        { print }' /etc/u5a/catplay-$mode.conf > /etc/catplay/catplay.conf
+    pref=$(get PREFERRED_PHONE)
+    # catplay invites the phone in this file first (60 s) when it starts; another phone can still join.
+    [ -n "$pref" ] && echo "$pref" > /persist/catplay_last_connect.txt
+    return 0
+}
+case "$1" in
+    get) get "$2" ;;
+    render) render "${2:-bench}" ;;
+    apply)
+        render "${2:-bench}"
+        rm -f /run/u5a/catplay-run.pid      # tell the catplay supervisor not to restart it
+        killall catplay_c2a hostapd 2>/dev/null; sleep 1
+        hostapd -B -P /run/hostapd.pid /run/u5a/hostapd.conf
+        u5a-catplay-run append &
+        echo "U5A: settings applied" > /dev/kmsg ;;
+    *) echo "usage: u5a-settings get KEY | render MODE | apply MODE" >&2; exit 2 ;;
+esac
